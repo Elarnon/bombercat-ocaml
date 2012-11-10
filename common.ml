@@ -132,7 +132,9 @@ let parse_addr s =
   let addr = String.sub s 0 i in
   let port =
     if i = l then None
-    else Some (int_of_string (String.sub s (i + 1) (l - i - 1)))
+    else try
+      Some (int_of_string (String.sub s (i + 1) (l - i - 1)))
+    with Failure "int_of_string" -> raise Not_found
   in mk_addr ?port addr
 
 let string_of_addr addr =

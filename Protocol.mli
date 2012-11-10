@@ -1,11 +1,80 @@
-type dir =
-  | N | E | W | S
+exception ReadError
 
-type client_msg =
-  | MOVE of pos * dir
-  | BOMB of pos
+type params =
+  { p_game_time : int
+  ; p_bomb_time : int
+  ; p_bomb_dist : int
+  ; p_map_width : int
+  ; p_map_height : int
+  ; p_turn_time : int
+  ; p_start_delay : int
+  ; p_version : int
+  }
 
-type server_msg =
-  | MOVE_OK of player * pos * dir
-  | BOMB_OK of player * pos
-  | EXPLOSION of pos list * player list * pos * int
+module Meta : sig
+  type client =
+    | ADD of Network.addr * string * int
+    | UPDATE of int * int
+    | DELETE of int
+    | LIST
+
+  type game =
+    { game_id : int
+    ; game_addr : Network.addr
+    ; game_name : string
+    ; game_nb_players : int
+    }
+
+  type server = 
+    | ADDED of int
+    | GAMES of game list
+
+  module Server : Network.TCP with
+    type input = client and type output = server
+
+  module Client : Network.TCP with
+    type input = server and type output = server
+end
+
+module Initialisation : sig
+  type client =
+    | HELLO of string * int list
+
+  type server =
+    | REJECTED of string
+    | JOIN of string * string * char
+    | START of string
+
+  module Server : Network.TCP with
+    type input = client and type output = server
+
+  module Client : Network.TCP with
+    type input = server and type output = client
+end
+
+module Game : sig
+  type dir =
+    | N | E | S | W
+
+  type pos = int * int
+
+  type client =
+    | MOVE of pos * dir
+    | BOBM of pos
+    | SYNC of int
+
+  type server_action =
+    | BROADCAST of client
+    | NOP of int
+    | DEAD
+
+  type server = 
+    | TURN of int * (string * server_action) list
+    | GAMEOVER of int * string option
+
+  module Server : Network.UDP with
+    type input = client and type output = server
+
+  module Client : Network.UDP with
+    type input = server and type output = client
+end
