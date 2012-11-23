@@ -9,21 +9,55 @@ type addr
  * to TODO[6669]. If [parse_addr] fails to resolve its argument to a valid
  * address, it raises Not_found.
  *)
-val parse_addr : string -> addr
+val parse_addr : string -> addr Lwt.t
 
 (* [mk_addr] provides another interface to create addresses, and separates the
  * hostname and the port in its argument. See [parse_addr] for more
  * information.
  *)
-val mk_addr : ?port:int -> string -> addr
+val mk_addr : ?port:int -> string -> addr Lwt.t
 
 (* Gives a printable representation of an address, of the form hostname:port.
  * [string_of_addr] currently asks DNS server for a reverse DNS entry. *)
-val string_of_addr : addr -> string
+val string_of_addr : addr -> string Lwt.t
 
 (* Gets the address and port from an address. *)
 val raw_addr : addr -> string * int
 
+module type CHANNEL = sig
+    type input
+    type output
+
+    val input_of_stream : char Lwt_stream.t -> input option Lwt.t
+
+    val stream_of_output : output -> char Lwt_stream.t
+end
+
+module TCP : sig
+  module type S = sig
+    type input
+    type output
+    type client
+    type t
+
+    val send : t -> output -> unit Lwt.t
+
+    val recv : t -> input option Lwt.t
+
+    val open_connection : addr -> t Lwt.t
+
+    val establish_server :
+        ?close:(client -> unit Lwt.t) -> addr
+        -> (client -> input Lwt_stream.t -> output Lwt_stream.t)
+        -> Lwt_io.server
+  end
+
+  module Make(Chan : CHANNEL) : S with
+    type input = Chan.input and
+    type output = Chan.output
+end
+
+(*
 module type Read = sig
   (* Readable type *)
   type t
@@ -58,6 +92,9 @@ module type Bufferize = sig
   (* Try to read a value from the buffer if enough data is already available
    * for that. *)
   val consume_buffer : buffer -> t option
+
+  (* Resets the buffer to its initial state, discarding any value *)
+  val reset_buffer : buffer -> unit
 end
 
 (* Creates a Bufferizable instance from a Serializable instance by encoding the
@@ -68,7 +105,36 @@ module BufferizeRead :
 module BufferizeShow :
   functor (Data : Show) -> Show with type t = Data.t
 
-module type TCP = sig
+module TCP : sig
+  (* type server
+
+  val mk_server : addr -> server
+
+  val connections :
+      server -> ('a input_channel * 'b output_channel) Lwt_stream.t *)
+
+  type server
+
+  val mk_server :
+    addr -> (char Lwt_stream.t -> 'a option Lwt.t) -> ('b -> char Lwt_stream.t)
+    -> ('a input_channel * 'b output_channel -> unit) -> Lwt_io.server
+    addr -> ('a input_channel * 'b output_channel -> unit) -> Lwt_io.server
+
+  val mk_connection :
+    addr -> (char Lwt_stream.t -> 'a option Lwt.t) -> ('b -> char Lwt_stream.t) ->
+      ('a Lwt_stream.t * ('b -> unit Lwt.t)) Lwt.t
+
+  val read : 'a input_channel -> 'a option Lwt.t
+
+  val read_all : 'a input_channel -> 'a Lwt_stream.t
+
+  val write : 'b output_channel -> 'b -> unit Lwt.t
+
+  val close : ('a, 'b) channel -> unit Lwt.t
+
+end
+(*
+
   (* Type of the data this kind of connection receives *)
   type input
 
@@ -120,7 +186,10 @@ module type TCP = sig
    * [flush] may throw any exception [Data.to_string] throws. *)
   val flush : [> `Out ] chan -> unit
 
-end
+  (* Closes a connection *)
+  val shutdown : 'a chan -> unit
+
+end *)
 
 module type UDP = sig
   (* Type of the data this kind of UDP socket receives *)
@@ -161,10 +230,12 @@ module type UDP = sig
   val flush : [> `Out ] socket -> unit
 end
 
+(*
 module MakeTCP :
   functor (In : Bufferize) -> functor (Out : Show) ->
-    TCP with type input = In.t and type output = Out.t
+    TCP with type input = In.t and type output = Out.t *)
 
 module MakeUDP :
   functor (In : Read) -> functor (Out : Show) ->
     UDP with type input = In.t and type output = Out.t
+    *)

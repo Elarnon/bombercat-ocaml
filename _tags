@@ -1,0 +1,5 @@
+<*.ml{,i}> or <{server,gtk_client}.{native,byte}>: package(lwt.unix)
+
+<{server,gtk_client}.{ml,native,byte}>: package(lablgtk2), package(lwt.glib)
+
+<{Bencode,Network}.ml{,i}>: package(lwt.unix)

@@ -1,16 +1,20 @@
-type addr = Unix.sockaddr
+open Lwt
+
+module U = Lwt_unix
+
+type addr = U.sockaddr
 
 let dns_resolve addr =
   (* TODO: Not_found ??? *)
-  let host = Unix.gethostbyname addr in
-  let l = host.Unix.h_addr_list in
+  U.gethostbyname addr >>= fun host ->
+  let l = host.U.h_addr_list in
   if Array.length l = 0
-  then raise Not_found
-  else l.(Random.int (Array.length l))
+  then fail Not_found (* TODO *)
+  else return l.(Random.int (Array.length l))
 
 let mk_addr ?(port=6669) addr =
-  let unix_addr = dns_resolve addr in
-  Unix.ADDR_INET (unix_addr, port)
+  dns_resolve addr >>= fun ip ->
+  return (U.ADDR_INET (ip, port))
 
 let parse_addr s =
   let l = String.length s in
@@ -26,17 +30,88 @@ let parse_addr s =
   in mk_addr ?port addr
 
 let string_of_addr addr =
-  let open Unix in
-  let ni = getnameinfo addr [] in
-  ni.ni_hostname ^ ":" ^ ni.ni_service
+  let open U in
+  getnameinfo addr [] >>= fun ni ->
+  return (ni.ni_hostname ^ ":" ^ ni.ni_service)
 
 let raw_addr addr =
-  let open Unix in
+  let open U in
   match addr with
   | ADDR_INET (inet, port) ->
-      (string_of_inet_addr inet, port)
+      (Unix.string_of_inet_addr inet, port)
   | _ -> assert false
 
+module type CHANNEL = sig
+    type input
+    type output
+
+    val input_of_stream : char Lwt_stream.t -> input option Lwt.t
+
+    val stream_of_output : output -> char Lwt_stream.t
+end
+
+module TCP = struct
+
+  module type S = sig
+    type input
+    type output
+    type client
+    type t
+
+    val send : t -> output -> unit Lwt.t
+
+    val recv : t -> input option Lwt.t
+
+    val open_connection : addr -> t Lwt.t
+
+    val establish_server :
+        ?close:(client -> unit Lwt.t) -> addr
+        -> (client -> input Lwt_stream.t -> output Lwt_stream.t)
+        -> Lwt_io.server
+  end
+
+  module Make(Chan : CHANNEL) = struct
+
+    type input = Chan.input
+    type output = Chan.output
+    type client = int
+    type t = Lwt_io.input_channel * Lwt_io.output_channel
+
+    let send (_, output) v =
+      Lwt_io.write_chars output (Chan.stream_of_output v)
+
+    let recv (input, _) =
+      Chan.input_of_stream (Lwt_io.read_chars input)
+
+    let open_connection addr =
+      Lwt_io.open_connection addr
+
+    let establish_server ?(close=fun _ -> return ()) addr f =
+      let cli_id = ref 0 in
+      Lwt_io.establish_server addr
+        (fun (input, output) ->
+          Lwt.ignore_result begin
+            let id = !cli_id in
+            cli_id := id + 1;
+            return id >>= fun id ->
+            let stream = Lwt_stream.from (fun () ->
+              Chan.input_of_stream (Lwt_io.read_chars input)) in
+              Lwt_stream.fold_s (fun v () ->
+                Lwt_io.write_chars output
+                  (Chan.stream_of_output v))
+              (f id stream) () >>= fun () ->
+                catch (fun () ->
+                  Lwt_io.close input >>= fun () ->
+                  Lwt_io.close output >>= fun () ->
+                  return id)
+                (function
+                  | Unix.Unix_error (Unix.ENOTCONN, _, _) -> return id
+                  | e -> fail e) >>= close
+          end)
+  end
+
+end
+(*
 module type Read = sig
   type t
   val read : string -> t
@@ -53,6 +128,7 @@ module type Bufferize = sig
   val empty_buffer : unit -> buffer
   val add_buffer : buffer -> string -> unit
   val consume_buffer : buffer -> t option
+  val reset_buffer : buffer -> unit
 end
 
 module BufferizeRead(Data : Read) = struct
@@ -78,6 +154,7 @@ module BufferizeRead(Data : Read) = struct
        | None -> None
     end
     | None -> None
+  let reset_buffer buff = Buffer.reset buff
 end
 
 module BufferizeShow(Data : Show) = struct
@@ -89,6 +166,20 @@ module BufferizeShow(Data : Show) = struct
 end
 
 module type TCP = sig
+  type ('a, 'b) channel
+  type 'a input_channel = ('a, Lwt_io.input) channel
+  type 'b output_channel = ('b, Lwt_io.output) channel
+
+  val mk_connection :
+    addr -> (char Lwt_stream.t -> 'a Lwt.t) -> ('b -> char Lwt_stream.t) ->
+      ('a input_channel * 'b output_channel) Lwt.t
+
+  val read : 'a input_channel -> 'a Lwt.t
+
+  val write : 'b output_channel -> 'b -> unit Lwt.t
+
+  val close : ('a, 'b) channel -> unit Lwt.t
+
   type input
   type output
   type 'a chan
@@ -107,6 +198,7 @@ module type TCP = sig
   val read : [> `In ] chan -> read_result
   val write : [> `Out ] chan -> output -> unit
   val flush : [> `Out ] chan -> unit
+  val shutdown : 'a chan -> unit
 end
 
 module type UDP = sig
@@ -134,8 +226,30 @@ let memo f =
       res
     end
 
-module MakeTCP(In : Bufferize)(Out : Show) = struct
+module TCP = struct
 
+  let mk_server reader writer addr f =
+      Lwt_io.establish_server addr
+        (fun (input, output) ->
+            f (reader (Lwt_io.read_chars in_chan))
+
+  let mk_connection addr reader writer =
+    Lwt_io.open_connection addr >>= fun (in_chan, out_chan) ->
+    return
+        ( Lwt_stream.from (fun () -> reader (Lwt_io.read_chars in_chan))
+        , write out_chan )
+
+  let read { reader; channel; _ } = reader (Lwt_io.read_chars channel)
+
+  let read_all channel =
+      Lwt_stream.from (fun () -> read channel)
+
+  let write { writer; channel; _ } v = Lwt_io.write_chars channel (writer v)
+
+  let close { channel; _ } = Lwt_io.close channel
+
+end
+(*
   type input = In.t
 
   type output = Out.t
@@ -219,12 +333,16 @@ module MakeTCP(In : Bufferize)(Out : Show) = struct
       let n = Unix.recv sock sbuff 0 1024 [] in
       chan.can_read <- false;
       if n = 0 then EOF else begin
+        prerr_endline "Receiving via TCP: ";
+        prerr_string (String.sub sbuff 0 n); prerr_newline ();
         In.add_buffer rbuff (String.sub sbuff 0 n);
         match In.consume_buffer rbuff with
-        | Some msg -> Message msg
-        | None -> Nothing
-      end
-    else Nothing
+            | Some msg -> Message msg
+            | None -> Nothing
+       end
+    else match In.consume_buffer rbuff with
+    | Some msg -> Message msg
+    | None -> Nothing
 
   let write { wbuff; _ } m =
     Buffer.add_string wbuff (Out.show m)
@@ -233,10 +351,21 @@ module MakeTCP(In : Bufferize)(Out : Show) = struct
     if can_write then
     let msg = Buffer.contents wbuff in
     Buffer.reset wbuff;
+    if msg <> "" then begin
+    prerr_endline "Sending via TCP: ";
+    prerr_string msg; prerr_newline () end;
     let _n = Unix.send sock msg 0 (String.length msg) [] in
     chan.can_write <- false
+
+  let shutdown ({ sock; _ } as chan) =
+    Unix.shutdown sock Unix.SHUTDOWN_ALL;
+    Unix.close sock;
+    chan.can_read <- false;
+    chan.can_write <- false;
+    In.reset_buffer chan.rbuff;
+    Buffer.reset chan.wbuff
   
-end
+end *)
 
 module MakeUDP(In : Read)(Out : Show) = struct
   type input = In.t
@@ -300,3 +429,4 @@ module MakeUDP(In : Read)(Out : Show) = struct
       socket.can_write <- false
     end else ()
 end
+*)
