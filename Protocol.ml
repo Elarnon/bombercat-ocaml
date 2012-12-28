@@ -1,14 +1,6 @@
 open Lwt
 open Network
-
-let some x = return (Some x)
-
-let none = return None
-
-let (>>>=) t f =
-  t >>= function
-    | Some v -> f v
-    | None -> none
+open Misc
 
 module Meta = struct
   type client =
@@ -133,7 +125,6 @@ module Meta = struct
   end
 end
 
-(*
 module Initialisation = struct
   type params =
     { p_game_time : int
@@ -233,24 +224,27 @@ module Initialisation = struct
         START date
     | _ -> raise ReadError
 
-  module WClient = struct
-    type t = client
-    let encode = bencode_client
-    let decode = bdecode_client
+  module Server = struct
+    type input = client
+    type output = server
+
+    let input_of_stream s = Bencode.of_stream s >>>= decode_client
+
+    let stream_of_output v = Bencode.to_stream (encode_server v)
   end
 
-  module WServer = struct
-    type t = server
-    let encode = bencode_server
-    let decode = bdecode_server
+  module Client = struct
+    type input = server
+    type output = client
+
+    let input_of_stream s = Bencode.of_stream s >>>= decode_server
+
+    let stream_of_output v = Bencode.to_stream (encode_client v)
   end
 
-  module Server =
-    Network.MakeTCP(Bencode.WrapBufferize(WClient))(Bencode.WrapShow(WServer))
-
-  module Client =
-    Network.MakeTCP(Bencode.WrapBufferize(WServer))(Bencode.WrapShow(WClient))
 end
+
+(*
 
 module Game = struct
   type dir =

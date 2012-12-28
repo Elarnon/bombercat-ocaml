@@ -1,16 +1,16 @@
 module Meta : sig
-  type client =
-    | ADD of Network.addr * string * int
-    | UPDATE of int * int
-    | DELETE of int
-    | LIST
-
   type game =
     { game_id : int
     ; game_addr : Network.addr
     ; game_name : string
     ; game_nb_players : int
     }
+
+  type client =
+    | ADD of Network.addr * string * int
+    | UPDATE of int * int
+    | DELETE of int
+    | LIST
 
   type server = 
     | ADDED of int
@@ -33,7 +33,6 @@ module Meta : sig
     type output = client
 end
 
-(*
 module Initialisation : sig
   type params =
     { p_game_time : int
@@ -55,12 +54,17 @@ module Initialisation : sig
     | JOIN of string * string * char
     | START of string
 
-  module Server : Network.TCP with
-    type input = client and type output = server
+  module Server : Network.CHANNEL with
+    type input = client and
+    type output = server
 
-  module Client : Network.TCP with
-    type input = server and type output = client
+  module Client : Network.CHANNEL with
+    type input = server and
+    type output = client
+
 end
+
+(*
 
 module Game : sig
   type dir =

@@ -1,15 +1,7 @@
 open Lwt
 open Protocol.Meta
+open Misc
 module S = Lwt_stream
-
-let some x = return (Some x)
-
-let none = return None
-
-let (>>>=) t f =
-  t >>= function
-    | Some v -> f v
-    | None -> none
 
 module Server = struct
 
@@ -148,55 +140,3 @@ module Client = struct
       | GAMES games -> some games
       | _ -> assert false (* TODO: error *)
 end
-
-(*
-module Client(Server : sig val chan : [> `In | `Out ] Protocol.Meta.Client.chan
-end) = struct
-
-  open Protocol.Meta.Client
-
-  let games = Hashtbl.create 17
-
-  let mk_tbl games_lst =
-    Hashtbl.clear games;
-    List.iter
-      (fun ({ game_id; _ } as game) ->
-        Hashtbl.add games game_id game)
-      games_lst
-
-  let flush () =
-    Client.check_ops ~write:[Server.chan] ();
-    Client.flush Server.chan
-
-  let add_server addr name nb_players () =
-    let (ip, port) = raw_addr addr in
-    Client.write Server.chan (ADD (mk_addr ip ~port, name, nb_players))
-
-  let update_server id nb_players () =
-    Protocol.Meta.Client.write Server.chan (UPDATE (id, nb_players))
-
-  let delete_server id () =
-    Protocol.Meta.Client.write Server.chan (DELETE id)
-
-  let list_servers () =
-    Protocol.Meta.Client.write Server.chan LIST
-
-  let rec process_messages () =
-    Protocol.Meta.Client.check_ops ~read:[Server.chan] ();
-    match (try Protocol.Meta.Client.read Server.chan with
-    | Protocol.ReadError -> Nothing
-    | Bencode.Format_error -> EOF) with
-    | EOF -> failwith "NIY" (* TODO: shutdown EVERYTHING ! *)
-    | Nothing -> ()
-    | Message m ->
-        match m with
-        | ADDED id ->
-            list_servers (); process_messages ()
-        | GAMES games_lst ->
-            mk_tbl games_lst;
-            process_messages ()
-
-  let get_games () =
-    process_messages ();
-    games
-end *)
