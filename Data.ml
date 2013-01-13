@@ -4,12 +4,46 @@ type map_case =
   | Destructible
   | Bomb of int
 
+type dir = Left | Right | Up | Down
+
 type map = 
   { width : int
   ; height : int
   ; content : map_case array array
   ; players : (char, (int * int)) Hashtbl.t
   }
+
+let pos map player =
+  try
+    Some (Hashtbl.find player map.players)
+  with Not_found -> None
+
+let check_pos map player ppos =
+  pos map player = Some ppos
+
+let after_move map player (x, y) dir =
+  if check_pos map player (x, y) then
+    match dir with
+    | Left ->
+      if x > 0 then Some (x - 1, y) else None
+    | Right -> 
+      if x < map,width - 1 then Some (x + 1, y) else None
+    | Up ->
+      if y > 0 then Some (x, y - 1) else None
+    | Down ->
+      if y < map.height - 1 then Some (x, y + 1) else None
+  else None
+
+let is_free map (x, y) =
+  try map.content.(x).(y) = Empty with Invalid_argument _ -> false
+
+let try_move map player pos dir =
+  match after_move map player pos dir with
+    | None -> false
+    | Some pos ->
+      if is_free map pos then begin
+        Hashtbl.replace map.players player pos; true
+      else false
 
 exception InvalidMap
 

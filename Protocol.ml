@@ -2,6 +2,10 @@ open Lwt
 open Network
 open Misc
 
+exception Error of string
+
+let failwith s = fail (Error s)
+
 module Meta = struct
   type client =
     | ADD of addr * string * int
@@ -166,6 +170,7 @@ module Initialisation = struct
             find tbl "ProtocolVersion"
           ) with
           | I gt, I bet, I bed, I mw, I mh, I tt, I sd, I pv ->
+	      return
               { p_game_time = gt
               ; p_bomb_time = bet
               ; p_bomb_dist = bed
@@ -175,10 +180,10 @@ module Initialisation = struct
               ; p_start_delay = sd
               ; p_version = pv
               }
-          | _ -> raise ReadError
-        with Not_found -> raise ReadError
+          | _ -> failwith "bdecode_params"
+        with Not_found -> failwith "bdecode_params"
     end
-    | _ -> raise ReadError
+    | _ -> failwith "becode_params"
 
   type client = 
     | HELLO of string * int list
@@ -196,13 +201,13 @@ module Initialisation = struct
   let bdecode_client = let open Bencode in function
     | L [ S "HELLO"; S pseudo; L bversions ] ->
         let versions =
-          List.map
+	  Lwt_list.map_p
             (function
-              | I i when i > 0 -> i
-              | _ -> raise ReadError)
+              | I i when i > 0 -> return i
+              | _ -> failwith "bdecode_client")
             bversions
-        in HELLO (pseudo, versions)
-    | _ -> raise ReadError
+	in versions >>= fun v -> some @$ HELLO (pseudo, v)
+    | _ -> none
 
   let bencode_server = let open Bencode in function
     | REJECTED reason -> L [ S "REJECTED"; S reason ]
@@ -214,32 +219,33 @@ module Initialisation = struct
         L [ S "START"; S date ]
 
   let bdecode_server = let open Bencode in function
-    | L [ S "REJECTED"; S reason ] -> REJECTED reason
+    | L [ S "REJECTED"; S reason ] -> some @$ REJECTED reason
     | L [ S "OK"; S id; S smap; bparams ] ->
-        OK (id, Data.map_of_string smap, bdecode_params bparams)
+	bdecode_params bparams >>= fun p ->
+        some @$ OK (id, Data.map_of_string smap, p)
     | L [ S "JOIN"; S pseudo; S id; S pos ] when
       String.length pos = 1 && pos.[0] >= 'A' && pos.[0] <= 'Z' ->
-        JOIN (pseudo, id, pos.[0])
+        some @$ JOIN (pseudo, id, pos.[0])
     | L [ S "START"; S date ] ->
-        START date
-    | _ -> raise ReadError
+        some @$ START date
+    | _ -> none
 
   module Server = struct
     type input = client
     type output = server
 
-    let input_of_stream s = Bencode.of_stream s >>>= decode_client
+    let input_of_stream s = Bencode.of_stream s >>>= bdecode_client
 
-    let stream_of_output v = Bencode.to_stream (encode_server v)
+    let stream_of_output v = Bencode.to_stream (bencode_server v)
   end
 
   module Client = struct
     type input = server
     type output = client
 
-    let input_of_stream s = Bencode.of_stream s >>>= decode_server
+    let input_of_stream s = Bencode.of_stream s >>>= bdecode_server
 
-    let stream_of_output v = Bencode.to_stream (encode_client v)
+    let stream_of_output v = Bencode.to_stream (bencode_client v)
   end
 
 end

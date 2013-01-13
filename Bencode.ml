@@ -1,4 +1,5 @@
 open Lwt
+open Misc
 
 module S = Lwt_stream
 
@@ -10,14 +11,11 @@ type t =
 
 type bencoded = private string
 
-let some x = return (Some x)
-
-let none = return None
-
-let (>>>=) t f =
-  t >>= function
-    | Some v -> f v
-    | None -> none
+let list_iteri f l =
+  let rec iteri n = function
+    | [] -> ()
+    | h::t -> f n h; iteri (n + 1) t
+  in iteri 0 l
 
 let nget_rev n s =
   let rec nget_ acc = function
@@ -83,7 +81,7 @@ and read_bstring s =
   read_bint s ':' >>>= fun len ->
   nget_rev len s >>>= fun l ->
   let s = String.make len ' ' in
-  List.iteri (fun i c -> s.[len - i - 1] <- c) l;
+  list_iteri (fun i c -> s.[len - i - 1] <- c) l;
   some s
 
 and of_stream s =

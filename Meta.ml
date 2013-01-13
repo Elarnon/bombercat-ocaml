@@ -11,67 +11,47 @@ module Server = struct
 
     type ('a, 'b) t =
       { tbl : ('a, 'b) Hashtbl.t
-      ; lock : Lwt_mutex.t
       ; mutable next_id : int
-      ; lock_id : Lwt_mutex.t
       ; ids : (TCP.client, 'a list) Hashtbl.t
-      ; lock_ids : Lwt_mutex.t
       }
 
     let create n =
       { tbl = Hashtbl.create n
-      ; lock = Lwt_mutex.create ()
       ; next_id = 1
-      ; lock_id = Lwt_mutex.create ()
       ; ids = Hashtbl.create 17
-      ; lock_ids = Lwt_mutex.create ()
       }
 
     let add servers client id game =
-      let adder () =
-        return (Hashtbl.add servers.tbl id game)
-      in Lwt.ignore_result (Lwt_mutex.with_lock servers.lock adder);
-      Lwt.ignore_result (Lwt_mutex.with_lock servers.lock_ids
-        (fun () -> return (
-          let v =
-            try Hashtbl.find servers.ids client with Not_found -> []
-          in Hashtbl.replace servers.ids client (id :: v))))
+      Hashtbl.add servers.tbl id game;
+      let v =
+	try Hashtbl.find servers.ids client with Not_found -> []
+      in Hashtbl.replace servers.ids client (id :: v);
+      return ()
 
     let find servers id =
-      let finder () =
-        try
-          return (Hashtbl.find servers.tbl id)
-        with Not_found -> fail Not_found
-      in Lwt_mutex.with_lock servers.lock finder
+      try
+	return (Hashtbl.find servers.tbl id)
+      with Not_found -> fail Not_found
 
     let games servers =
-      let getter () =
-        return (Hashtbl.fold (fun _ v l -> v :: l) servers.tbl [])
-      in Lwt_mutex.with_lock servers.lock getter
+      return (Hashtbl.fold (fun _ v l -> v :: l) servers.tbl [])
 
     let update servers id game =
-      let updater () =
-        return (Hashtbl.replace servers.tbl id game)
-      in Lwt.ignore_result (Lwt_mutex.with_lock servers.lock updater)
+      return (Hashtbl.replace servers.tbl id game)
 
     let remove servers id =
-      let remover () =
-        return (Hashtbl.remove servers.tbl id)
-      in Lwt.ignore_result (Lwt_mutex.with_lock servers.lock remover)
+      return (Hashtbl.remove servers.tbl id)
 
     let next_id servers =
-      Lwt_mutex.with_lock servers.lock_id (fun () ->
-        servers.next_id <- servers.next_id + 1;
-        return servers.next_id)
+      servers.next_id <- servers.next_id + 1;
+      return servers.next_id
 
     let take_ids servers client =
-      Lwt_mutex.with_lock servers.lock_ids (fun () ->
-        try
-          let v = Hashtbl.find servers.ids client
-          in Hashtbl.remove servers.ids client;
-          return v
-        with Not_found -> return [])
-
+      try
+	let v = Hashtbl.find servers.ids client
+	in Hashtbl.remove servers.ids client;
+	return v
+      with Not_found -> return []
   end
 
   let remove_from servers client =

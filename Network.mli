@@ -47,9 +47,9 @@ module TCP : sig
     val open_connection : addr -> t Lwt.t
 
     val establish_server :
-        ?close:(client -> unit Lwt.t) -> addr
-        -> (client -> input Lwt_stream.t -> output Lwt_stream.t)
-        -> Lwt_io.server
+        ?close:(client -> unit Lwt.t) -> addr ->
+        (client -> input Lwt_stream.t -> output Lwt_stream.t)  ->
+        Lwt_io.server
   end
 
   module Make(Chan : CHANNEL) : S with

@@ -86,14 +86,18 @@ module TCP = struct
     let open_connection addr =
       Lwt_io.open_connection addr
 
-    let establish_server ?(close=fun _ -> return ()) addr f =
+    let establish_server
+      ?(close=fun _ -> return ())
+      ?(open_=fun _ -> return ())
+      addr
+      f =
       let cli_id = ref 0 in
       Lwt_io.establish_server addr
         (fun (input, output) ->
           Lwt.ignore_result begin
             let id = !cli_id in
             cli_id := id + 1;
-            return id >>= fun id ->
+            open_ id >>= fun () ->
             let stream = Lwt_stream.from (fun () ->
               Chan.input_of_stream (Lwt_io.read_chars input)) in
               Lwt_stream.fold_s (fun v () ->

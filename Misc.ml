@@ -9,3 +9,5 @@ let (>>>=) t f =
     | Some v -> f v
     | None -> none
 
+
+let (@$) f x = f x
