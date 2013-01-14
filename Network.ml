@@ -88,7 +88,6 @@ module TCP = struct
 
     let establish_server
       ?(close=fun _ -> return ())
-      ?(open_=fun _ -> return ())
       addr
       f =
       let cli_id = ref 0 in
@@ -97,7 +96,6 @@ module TCP = struct
           Lwt.ignore_result begin
             let id = !cli_id in
             cli_id := id + 1;
-            open_ id >>= fun () ->
             let stream = Lwt_stream.from (fun () ->
               Chan.input_of_stream (Lwt_io.read_chars input)) in
               Lwt_stream.fold_s (fun v () ->

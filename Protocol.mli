@@ -53,6 +53,7 @@ module Initialisation : sig
     | OK of string * Data.map * params
     | JOIN of string * string * char
     | START of string
+    | QUIT of string
 
   module Server : Network.CHANNEL with
     type input = client and

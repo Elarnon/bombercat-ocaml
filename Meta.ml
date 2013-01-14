@@ -56,7 +56,7 @@ module Server = struct
 
   let remove_from servers client =
     Games.take_ids servers client >>= fun ids ->
-    Lwt_list.iter_p (fun id -> Games.remove servers id; return ()) ids
+    Lwt_list.iter_p (fun id -> Games.remove servers id) ids
 
   let treat_client servers client stream =
     S.flatten (S.from begin fun () ->
@@ -70,18 +70,18 @@ module Server = struct
               ; game_name = name
               ; game_nb_players = nb_players
               } in
-            Games.add servers client id game;
+            Games.add servers client id game >>= fun () ->
             return (Some [ADDED id])
         | Some (UPDATE (id, nb_players)) -> begin
             catch (fun () ->
               Games.find servers id >>= fun game ->
-              Games.update servers id { game with game_nb_players = nb_players };
+              Games.update servers id { game with game_nb_players = nb_players } >>= fun () ->
               return (Some []))
               (function
                 | Not_found -> return (Some [])
                 | e -> fail e)
         end
-        | Some (DELETE id) -> Games.remove servers id; return (Some [])
+        | Some (DELETE id) -> Games.remove servers id >> return (Some [])
         | Some LIST ->
             Games.games servers >>= fun g -> return (Some [GAMES g])
     end)

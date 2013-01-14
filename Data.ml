@@ -15,7 +15,7 @@ type map =
 
 let pos map player =
   try
-    Some (Hashtbl.find player map.players)
+    Some (Hashtbl.find map.players player)
   with Not_found -> None
 
 let check_pos map player ppos =
@@ -27,7 +27,7 @@ let after_move map player (x, y) dir =
     | Left ->
       if x > 0 then Some (x - 1, y) else None
     | Right -> 
-      if x < map,width - 1 then Some (x + 1, y) else None
+      if x < map.width - 1 then Some (x + 1, y) else None
     | Up ->
       if y > 0 then Some (x, y - 1) else None
     | Down ->
@@ -43,7 +43,7 @@ let try_move map player pos dir =
     | Some pos ->
       if is_free map pos then begin
         Hashtbl.replace map.players player pos; true
-      else false
+      end else false
 
 exception InvalidMap
 

@@ -2,4 +2,4 @@
 
 <{server,gtk_client}.{ml,native,byte}>: package(lablgtk2), package(lwt.glib)
 
-<{Bencode,Network}.ml{,i}>: package(lwt.unix)
+<{Bencode,Network,Meta,Initialisation}.ml{,i}>: package(lwt.unix), package(lwt.syntax), syntax(camlp4o)

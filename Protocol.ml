@@ -193,6 +193,7 @@ module Initialisation = struct
     | OK of string * Data.map * params
     | JOIN of string * string * char
     | START of string
+    | QUIT of string
 
   let bencode_client = let open Bencode in function
     | HELLO (pseudo, versions) ->
@@ -217,6 +218,8 @@ module Initialisation = struct
         L [ S "JOIN"; S pseudo; S id; S (String.make 1 pos) ]
     | START date ->
         L [ S "START"; S date ]
+    | QUIT ident ->
+        L [ S "QUIT"; S ident ]
 
   let bdecode_server = let open Bencode in function
     | L [ S "REJECTED"; S reason ] -> some @$ REJECTED reason
@@ -228,6 +231,8 @@ module Initialisation = struct
         some @$ JOIN (pseudo, id, pos.[0])
     | L [ S "START"; S date ] ->
         some @$ START date
+    | L [ S "QUIT"; S ident ] ->
+        some @$ QUIT ident
     | _ -> none
 
   module Server = struct
