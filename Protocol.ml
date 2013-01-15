@@ -62,16 +62,23 @@ module Meta = struct
     | L ( S "ADD" :: S ip :: I port :: S name :: I nb_players :: _ ) ->
         mk_addr ~port ip >>= fun addr -> (* TODO: try/catch *)
         if nb_players < 0
-        then failwith "Meta.decode_client"
+        then
+          fail (Error 
+            ("Unexpected negative number of players while reading ADD message "
+            ^ "from a Protocol.Meta client."))
         else return (ADD (addr, name, nb_players))
     | L ( S "UPDATE" :: I game_id :: I nb_players :: _ ) ->
         if nb_players < 1
-        then failwith "Meta.decode_client"
+        then
+          fail (Error
+            ("Unexpected negative number of players while reading ADD message "
+            ^ "from a Protocol.Meta client."))
         else return (UPDATE (game_id, nb_players))
     | L ( S "DELETE" :: I game_id :: _ ) ->
         return (DELETE game_id)
     | S "LIST" -> return LIST
-    | v -> failwith "Meta.decode_client"
+    | v ->
+        fail (Error "Invalid message from Protocol.Meta client.")
 
   let bencode_game g =
     let open Bencode in
@@ -100,10 +107,13 @@ module Meta = struct
             ; game_name = name
             ; game_nb_players = players
             }
-        | _ -> failwith "bdecode_game"
-      with Not_found -> failwith "bdecode_game"
+        | _ ->
+            fail (Error "Ill-typed game parameters dictionary.")
+      with Not_found ->
+        fail (Error "Missing key in game parameters dictionary.")
     end
-    | _ -> failwith "bdecode_game"
+    | _ -> fail (Error ("Unexpected non-dictionary value passed as game "
+          ^ "parameters."))
 
   let encode_server = let open Bencode in function
     | ADDED id -> L [ S "ADDED"; I id ]
@@ -115,7 +125,7 @@ module Meta = struct
     | L (S "GAMES" :: q) ->
         Lwt_list.map_p bdecode_game q >>= fun games ->
         return (GAMES games)
-    | _ -> failwith "decode_server"
+    | _ -> fail (Error "Invalid message from Protocol.Meta server.")
 
   module Server = struct
     type input = client
@@ -126,9 +136,11 @@ module Meta = struct
         decode_client
         (function
            | Bencode.Format_error e ->
-               Lwt_log.error ("Becode format error while decoding Meta client: " ^ e)
+               Lwt_log.error
+                ("Bencode format error while decoding messages from " ^
+                "Protocol.Meta client: " ^ e)
            | Error where ->
-               Lwt_log.error ("Protocol.Meta.Server error in " ^ where)
+               Lwt_log.error where
            | exn -> fail exn)
         s
 
@@ -145,9 +157,10 @@ module Meta = struct
         (function
            | Bencode.Format_error e ->
                Lwt_log.error
-                 ("Bencde format error while decoding Meta server." ^ e)
+                 ("Bencode format error while decoding messages from " ^
+                 "Protocol.Meta server: " ^ e)
            | Error where ->
-               Lwt_log.error ("Protocol.Meta.Client error in " ^ where)
+               Lwt_log.error where
            | exn -> fail exn)
         s
 
@@ -286,9 +299,10 @@ module Initialisation = struct
         (function
            | Bencode.Format_error e ->
                Lwt_log.error
-                 ("Bencode format error while decoding Init client." ^ e)
+                ("Bencode format error while decoding messages from " ^
+                "Protocol.Init client: " ^ e)
            | Error where ->
-               Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where)
+               Lwt_log.error where
            | exn -> fail exn)
 
     let stream_of_output v = Bencode.to_stream (bencode_server v)
@@ -304,10 +318,10 @@ module Initialisation = struct
         (function
            | Bencode.Format_error e ->
                Lwt_log.error
-                ("Bencode format error while decoding Init server." ^ e)
+                ("Bencode format error while decoding messags from " ^
+                "Protocol.Init server: " ^ e)
            | Error where ->
-               Lwt_log.error
-                 ("Protocol.Meta.Initialisation error in " ^ where)
+               Lwt_log.error where
            | exn -> fail exn)
 
     let stream_of_output v = Bencode.to_stream (bencode_client v)

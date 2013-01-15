@@ -53,16 +53,21 @@ module Server = struct
 
   (* Treat end of TCP connection as authentified user [cid] in state [state] *)
   let treat_end cid state () =
-    let _, chr =
-      try Hashtbl.find state.players cid
-      with Not_found -> assert false (* TODO ? *) in
-    (* Remove player from world *)
-    Hashtbl.remove state.players cid;
-    (* Mark its position as available again *)
-    Hashtbl.add state.available chr ();
+    begin try
+      let _, chr = Hashtbl.find state.players cid in
+      (* Remove player from world *)
+      Hashtbl.remove state.players cid;
+      (* Mark its position as available again *)
+      Hashtbl.add state.available chr ();
+      return ()
+    with Not_found ->
+      Lwt_log.fatal ("Client ID not found in state. Continuing could lead to " ^
+      "severe inconsistencies, aborting everything. This is a programmer " ^
+      "failure.") >>
+      assert false
+    end >>= fun () ->
     (* Broadcast quitting *)
     Lwt_condition.broadcast state.quit cid;
-    (* TODO: send update to meta server *)
     return ()
 
   exception Found of char
@@ -90,6 +95,10 @@ module Server = struct
             let c = try
               Hashtbl.iter (fun k () -> raise (Found k)) state.available;
               (* Impossible: [nb_players state < max_players state] here *)
+              Lwt.ignore_result (
+                Lwt_log.fatal ("Unavailable ID while there shall still be room " ^
+                "player. This is a programmer failure. Aborting everything.")
+              );
               assert false
             with Found k -> k in
             Hashtbl.remove state.available c;
@@ -119,18 +128,14 @@ module Server = struct
     let rec treat_input do_message do_end =
       Lwt_stream.get real_stream >>= function
         | Some (`Client msg) ->
-            Lwt_log.debug "Wut..." >>
             let cli, lst = do_message state msg in
-            Lwt_log.debug "Will push" >>= fun () ->
             List.iter (fun e -> push (Some e)) lst;
-            Lwt_log.debug "Pushed." >>= fun () ->
             Lwt_condition.broadcast state.update ();
             begin match cli with
               | Some s -> treat_input (treat_message s) (treat_end s)
               | None -> treat_input treat_anonymous_message (fun _ -> return)
             end
         | Some (`Start (x,y)) ->
-            Lwt_log.debug "START." >>= fun () ->
             push (Some (START (x, y)));
             push None;
             return ()
@@ -147,7 +152,6 @@ module Server = struct
 
   let rec handle_server server state =
     Lwt_condition.wait state.update >>
-      Lwt_log.debug "handle!" >>
     if nb_players state = max_players state then begin
       (* Ready to start ! *)
       (* Lwt_io.shutdown_server server; *)
@@ -185,7 +189,7 @@ module Server = struct
       Hashtbl.iter (fun _ push -> push msg) streams in
     let state = mk_state map params push in
     let server = TCP.establish_server
-      ~close:(fun cli -> remove_stream cli; Lwt_log.debug "END.\n" >> return ())
+      ~close:(fun cli -> remove_stream cli; return ())
       addr
       (fun client stream -> treat state stream)
     in handle_server server state

@@ -35,20 +35,26 @@ let rec continue_bint s neg value endchar =
     else if c = endchar then
         return (if neg then -value else value)
     else 
-      fail (Format_error "Bencode error in continue_bint")
+      fail (Format_error (Format.sprintf
+        ("Unexpected character `%c` while reading a bencoded integer "
+        ^^ "(expecting a digit or `%c`).") c endchar))
   
 let negative_bint s endchar =
   S.next s >>= function
     | c when '1' <= c && c <= '9' -> continue_bint s true 0 endchar
-    | _ ->
-        fail (Format_error "Bencode error in negative_bint")
+    | c ->
+        fail (Format_error (Format.sprintf
+          ("Unexpected character `%c` after minus sign in bencoded integer "
+          ^^ " (expecting a digit).") c))
   
 let read_bzero s endchar =
   S.next s >>= fun c ->
     if c = endchar
     then return 0
     else
-      fail (Format_error "Bencode error in read_bzero")
+      fail (Format_error (Format.sprintf
+        ("Unexpected character `%c` after reading a zero in bencode (`%c` "
+        ^^ "expected).") c endchar))
 
 let read_bint s endchar =
   S.peek s >>= function
@@ -59,8 +65,12 @@ let read_bint s endchar =
         S.junk s >>= fun () ->
         read_bzero s endchar
     | Some c when '1' <= c && c <= '9' -> continue_bint s false 0 endchar
-    | _ ->
-        fail (Format_error "Benode error in read_bint")
+    | Some c ->
+        fail (Format_error (Format.sprintf
+          "Unexpected character `%c` while reading bencode integer (read_bint)."
+          c))
+    | None ->
+        fail Lwt_stream.Empty
 
 let rec read_blist s acc =
   S.peek s >>= fun c ->
@@ -68,7 +78,7 @@ let rec read_blist s acc =
       S.junk s >>= fun () ->
       return (List.rev acc)
     else
-      of_stream s >>= fun v ->
+      read_bencode s >>= fun v ->
       read_blist s (v :: acc)
   
 and read_bdict s hash last =
@@ -76,14 +86,15 @@ and read_bdict s hash last =
     | Some 'e' -> S.junk s >>= fun () -> return hash
     | Some c ->
         read_bstring s >>= fun key ->
-        (* if Some key <= last
-          then fail (Format_error "read_bdict")
-          else *)
-            of_stream s >>= fun v ->
-            Hashtbl.add hash key v;
-            read_bdict s hash (Some key)
+        (* TODO *)
+        begin if Some key <= last then
+          Lwt_log.debug "Illegal key order in bencoded dict. Reading anyway."
+        else return () end >>
+        read_bencode s >>= fun v ->
+        Hashtbl.add hash key v;
+        read_bdict s hash (Some key)
     | None ->
-        fail (Format_error "Bencode error in read_bdict")
+        fail Lwt_stream.Empty
 
 and read_bstring s =
   read_bint s ':' >>= fun len ->
@@ -92,31 +103,37 @@ and read_bstring s =
   list_iteri (fun i c -> s.[len - i - 1] <- c) l;
   return s
 
-and of_stream s =
+and read_bencode s =
   S.peek s >>= function
     | Some 'i' ->
         S.junk s >>= fun () ->
-        read_bint s 'e' >>= fun i -> return (Some (I i))
+        read_bint s 'e' >>= fun i -> return (I i)
     | Some 'l' ->
         S.junk s >>= fun () ->
-        read_blist s [] >>= fun l -> return (Some (L l))
+        read_blist s [] >>= fun l -> return (L l)
     | Some 'd' ->
         S.junk s >>= fun () ->
-        read_bdict s (Hashtbl.create 17) None >>= fun d -> return (Some (D d))
+        read_bdict s (Hashtbl.create 17) None >>= fun d -> return (D d)
     | Some c when '0' <= c && c <= '9' ->
-        read_bstring s >>= fun s -> return (Some (S s))
+        read_bstring s >>= fun s -> return (S s)
     | Some '\n' ->
-        S.junk s >> of_stream s (* TODO: remove *)
-    | Some _ ->
-        fail (Format_error "Bencode unexpected initial character.")
-    | None -> return_none
+        S.junk s >> read_bencode s (* TODO: remove *)
+    | Some c ->
+        fail (Format_error (Format.sprintf
+          ("Unexpected initial character `%c` for bencoded value (expecting "
+          ^^ "`i`, `l`, `d` or a digit).") c))
+    | None ->
+        fail Lwt_stream.Empty
 
 let of_stream stream =
   try_lwt
-    Lwt_stream.parse stream of_stream
+    Lwt_stream.is_empty stream >>= fun empty ->
+      if empty then return_none
+      else Lwt_stream.parse stream read_bencode >|= fun x -> Some x
   with
   | Lwt_stream.Empty ->
-      fail (Format_error "Bencode stream too short")
+      fail (Format_error
+        "Unexpected end of stream while reading a bencoded value.")
 
 let rec to_stream = function
   | S s -> S.of_string (string_of_int (String.length s) ^ ":" ^ s)
