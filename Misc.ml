@@ -12,14 +12,14 @@ let (>>>=) t f =
 
 let (@$) f x = f x
 
-let merge : 'a Lwt_stream.t list -> 'a Lwt_stream.t = function streams ->
+let merge ?(quit=false) streams =
   let with_stream s =
     Lwt_stream.peek s >>= fun x -> return (x, s) in
   let ended, running = ref [], ref (List.map with_stream streams) in
   let rec step () =
     match !ended with
     | (x, s) :: ended' ->
-        Lwt_stream.junk s;
+        Lwt_stream.junk s >>= fun () ->
         ended := ended';
         running := with_stream s :: !running;
         return (Some x)
@@ -27,9 +27,19 @@ let merge : 'a Lwt_stream.t list -> 'a Lwt_stream.t = function streams ->
         if !running = [] then return None
         else
           Lwt.nchoose_split !running >>= fun (ended', running') ->
-          let ended'' = List.filter (fun x -> fst x <> None) ended' in
-          let ended_ = List.map
-            (function | (None, _) -> assert false
-                      | (Some x, s) -> (x, s)) ended'' in
-          ended := ended_; running := running'; step ()
+          let end_now = ref false in
+          let ended'' = List.filter
+                          (fun x ->
+                             if fst x = None then begin
+                               end_now := quit; false
+                             end else true)
+                          ended' in
+          if !end_now then
+            return None
+          else begin
+            let ended_ = List.map
+              (function | (None, _) -> assert false
+                        | (Some x, s) -> (x, s)) ended'' in
+            ended := ended_; running := running'; step ()
+          end
   in Lwt_stream.from step

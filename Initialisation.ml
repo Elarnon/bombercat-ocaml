@@ -20,11 +20,12 @@ module Server = struct
     (* All registered players *)
     ; players : (string, string * char) Hashtbl.t
     ; update : unit Lwt_condition.t
+    (* Called on game start *)
     ; start : (Unix.tm * int) Lwt_condition.t
+    (* Called on player join *)
     ; joins : (string * string * char) Lwt_condition.t
-    (* Message broadcast function. Authentified and anonymous clients both
-     * receives the message. *)
-    ; broadcast : Protocol.Initialisation.server option -> unit
+    (* Called on player quit *)
+    ; quit : string Lwt_condition.t
     }
 
   let mk_state map params push =
@@ -36,9 +37,9 @@ module Server = struct
     ; params
     ; players = Hashtbl.create 17
     ; update = Lwt_condition.create ()
-    ; broadcast = push 
     ; start = Lwt_condition.create ()
     ; joins = Lwt_condition.create ()
+    ; quit = Lwt_condition.create ()
     }
 
   let nb_players { players; _ } = Hashtbl.length players
@@ -60,7 +61,7 @@ module Server = struct
     (* Mark its position as available again *)
     Hashtbl.add state.available chr ();
     (* Broadcast quitting *)
-    state.broadcast (Some (QUIT cid));
+    Lwt_condition.broadcast state.quit cid;
     (* TODO: send update to meta server *)
     return ()
 
@@ -99,28 +100,31 @@ module Server = struct
               (fun o_id (o_pseudo, o_pos) l ->
                 JOIN (o_pseudo, o_id, o_pos) :: l)
               state.players [] in
-            (* Broadcast join message *)
-            state.broadcast (Some (JOIN (pseudo, s, c)));
             Hashtbl.add state.players s (pseudo, c);
+            (* Broadcast join message *)
             Lwt_condition.broadcast state.joins (pseudo, s, c);
             (* Send messages *)
             (Some s, (OK (s, state.map, state.params) :: joins))
           end
 
   let treat state stream =
-    let out, push, set_ref = Lwt_stream.create_with_reference () in
+    let out, push = Lwt_stream.create () in
     let client_stream = Lwt_stream.map (fun x -> `Client x) stream
     and server_stream = Lwt_stream.from (fun () ->
       let start_ = Lwt_condition.wait state.start >|= fun (x,y) -> `Start (x,y)
       and join_  = Lwt_condition.wait state.joins >|= fun x -> `Join x
-      in Lwt.choose [ start_; join_ ] >|= fun x -> Some x) in
-    let real_stream = merge [ client_stream ; server_stream ] in
+      and quit_  = Lwt_condition.wait state.quit  >|= fun x -> `Quit x
+      in Lwt.choose [ start_; join_ ; quit_ ] >|= fun x -> Some x) in
+    let real_stream = merge ~quit:true [ client_stream ; server_stream ] in
     let rec treat_input do_message do_end =
       Lwt_stream.get real_stream >>= function
-        | Some (`Client msg) -> 
+        | Some (`Client msg) ->
+            Lwt_log.debug "Wut..." >>
             let cli, lst = do_message state msg in
-            Lwt_list.iter_s (fun e -> return (push (Some e))) lst >>=
-            fun () -> Lwt_condition.broadcast state.update ();
+            Lwt_log.debug "Will push" >>= fun () ->
+            List.iter (fun e -> push (Some e)) lst;
+            Lwt_log.debug "Pushed." >>= fun () ->
+            Lwt_condition.broadcast state.update ();
             begin match cli with
               | Some s -> treat_input (treat_message s) (treat_end s)
               | None -> treat_input treat_anonymous_message (fun _ -> return)
@@ -128,18 +132,22 @@ module Server = struct
         | Some (`Start (x,y)) ->
             Lwt_log.debug "START." >>= fun () ->
             push (Some (START (x, y)));
-            (* push None; *)
+            push None;
             return ()
         | Some (`Join (s, s', c)) ->
             push (Some (JOIN (s, s', c)));
             treat_input do_message do_end
+        | Some (`Quit a) ->
+            push (Some (QUIT a));
+            treat_input do_message do_end
         | None -> push None; do_end state ()
     in
-    set_ref (treat_input treat_anonymous_message (fun _ -> return));
+    Lwt.async (fun () -> treat_input treat_anonymous_message (fun _ -> return));
     out
 
   let rec handle_server server state =
     Lwt_condition.wait state.update >>
+      Lwt_log.debug "handle!" >>
     if nb_players state = max_players state then begin
       (* Ready to start ! *)
       (* Lwt_io.shutdown_server server; *)

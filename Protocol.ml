@@ -6,6 +6,17 @@ exception Error of string
 
 let failwith s = fail (Error s)
 
+let read_stream decoder catcher s =
+  Lwt_stream.is_empty s >>= function
+    | true -> return_none
+    | false ->
+        try_lwt
+          Bencode.of_stream s >>= function
+            | Some x -> decoder x >|= fun x -> Some x
+            | None -> return_none
+        with
+          | exn -> catcher exn >> return None
+
 module Meta = struct
   type client =
     | ADD of addr * string * int
@@ -111,16 +122,15 @@ module Meta = struct
     type output = server
 
     let input_of_stream s =
-      try_lwt
-        Bencode.of_stream s >>= decode_client >|= fun x -> Some x
-      with
-        | Bencode.Format_error ->
-            Lwt_log.error
-              ("Bencode format error while decoding Meta client.") >>
-            return_none
-        | Error where ->
-            Lwt_log.error ("Protocol.Meta.Server error in " ^ where) >>
-            return_none
+      read_stream
+        decode_client
+        (function
+           | Bencode.Format_error e ->
+               Lwt_log.error ("Becode format error while decoding Meta client: " ^ e)
+           | Error where ->
+               Lwt_log.error ("Protocol.Meta.Server error in " ^ where)
+           | exn -> fail exn)
+        s
 
     let stream_of_output v = Bencode.to_stream (encode_server v)
   end
@@ -130,16 +140,16 @@ module Meta = struct
     type output = client
 
     let input_of_stream s =
-      try_lwt
-        Bencode.of_stream s >>= decode_server >|= fun x -> Some x
-      with
-        | Bencode.Format_error ->
-            Lwt_log.error
-              ("Bencode format error while decoding Meta server.") >>
-            return_none
-        | Error where ->
-            Lwt_log.error ("Protocol.Meta.Client error in " ^ where) >>
-            return_none
+      read_stream
+        decode_server
+        (function
+           | Bencode.Format_error e ->
+               Lwt_log.error
+                 ("Bencde format error while decoding Meta server." ^ e)
+           | Error where ->
+               Lwt_log.error ("Protocol.Meta.Client error in " ^ where)
+           | exn -> fail exn)
+        s
 
     let stream_of_output v = Bencode.to_stream (encode_client v)
   end
@@ -270,17 +280,16 @@ module Initialisation = struct
     type input = client
     type output = server
 
-    let input_of_stream s =
-      try_lwt
-        Bencode.of_stream s >>= bdecode_client >|= fun x -> Some x
-      with
-        | Bencode.Format_error ->
-            Lwt_log.error 
-              "Bencode format error while decoding Init client." >>
-            return_none
-        | Error where ->
-            Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where) >>
-            return_none
+    let input_of_stream =
+      read_stream
+        bdecode_client
+        (function
+           | Bencode.Format_error e ->
+               Lwt_log.error
+                 ("Bencode format error while decoding Init client." ^ e)
+           | Error where ->
+               Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where)
+           | exn -> fail exn)
 
     let stream_of_output v = Bencode.to_stream (bencode_server v)
   end
@@ -289,147 +298,19 @@ module Initialisation = struct
     type input = server
     type output = client
 
-    let input_of_stream s =
-      try_lwt
-        Bencode.of_stream s >>= bdecode_server >|= fun x -> Some x
-      with
-        | Bencode.Format_error ->
-            Lwt_log.error
-              "Bencode format error while decoding Init server." >>
-            return_none
-        | Error where ->
-            Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where) >>
-            return_none
+    let input_of_stream =
+      read_stream
+        bdecode_server
+        (function
+           | Bencode.Format_error e ->
+               Lwt_log.error
+                ("Bencode format error while decoding Init server." ^ e)
+           | Error where ->
+               Lwt_log.error
+                 ("Protocol.Meta.Initialisation error in " ^ where)
+           | exn -> fail exn)
 
     let stream_of_output v = Bencode.to_stream (bencode_client v)
   end
 
 end
-
-(*
-
-module Game = struct
-  type dir =
-    | N | E | S | W
-    
-  let dir_of_string = function
-    | "UP" -> N
-    | "RIGHT" -> E
-    | "DOWN" -> S
-    | "LEFT" -> W
-    | _ -> raise ReadError
-
-  let bdecode_dir = function
-    | Bencode.S s -> dir_of_string s
-    | _ -> raise ReadError
-    
-  let string_of_dir = function
-    | N -> "UP"
-    | E -> "RIGHT"
-    | S -> "DOWN"
-    | W -> "LEFT"
-
-  let bencode_dir d = Bencode.S (string_of_dir d)
-
-  type pos = int * int
-
-  let bdecode_pos = let open Bencode in function
-    | L [ I x; I y ] -> (x, y)
-    | _ -> raise ReadError
-
-  let bencode_pos (x, y) =
-    Bencode.(L [ I x; I y])
-
-  type client =
-    | MOVE of pos * dir
-    | BOMB of pos
-    | SYNC of int
-
-  type server_action =
-    | BROADCAST of client
-    | NOP of int
-    | DEAD
-
-  type server =
-    | TURN of int * (string * server_action) list
-    | GAMEOVER of int * string option
-
-  let bencode_client = let open Bencode in function
-    | MOVE (pos, dir) ->
-        L [ S "MOVE"; bencode_pos pos; bencode_dir dir ]
-    | BOMB pos ->
-        L [ S "BOMB"; bencode_pos pos ]
-    | SYNC last ->
-        L [ S "SYNC"; I last ]
-
-  let bdecode_client = let open Bencode in function
-    | L [ S "MOVE"; bpos; bdir ] ->
-        let pos = bdecode_pos bpos
-        and dir = bdecode_dir bdir in
-        MOVE (pos, dir)
-    | L [ S "BOMB"; bpos ] ->
-        let pos = bdecode_pos bpos in
-        BOMB pos
-    | L [ S "SYNC"; I last ] ->
-        SYNC last
-    | _ -> raise ReadError
-
-  let bencode_server_action = let open Bencode in function
-    | BROADCAST client -> bencode_client client
-    | NOP i -> L [ S "NOP"; I i ]
-    | DEAD -> S "DEAD"
-
-  let bdecode_server_action = let open Bencode in function
-    | L [ S "NOP"; I i ] -> NOP i
-    | S "DEAD" -> DEAD
-    | b -> BROADCAST (bdecode_client b)
-
-  let bencode_server = let open Bencode in function
-    | TURN (i, l) ->
-        let tbl = Hashtbl.create 17 in
-        List.iter
-          (fun (k, v) -> Hashtbl.add tbl k (bencode_server_action v))
-          l;
-        L [ S "TURN"; I i; D tbl ]
-    | GAMEOVER (i, s) ->
-        let tbl = Hashtbl.create 17 in
-        begin match s with
-        | None -> ()
-        | Some v -> Hashtbl.add tbl "Winner" (S v) end;
-        L [ S "GAMEOVER"; I i; D tbl ]
-
-  let bdecode_server = let open Bencode in function
-    | L [ S "TURN"; I i; D tbl ] ->
-        TURN (i, 
-              Hashtbl.fold
-                (fun k v l -> (k, bdecode_server_action v) :: l)
-                tbl
-                [])
-    | L [ S "GAMEOVER"; I i; D tbl ] ->
-        let s =
-          try begin match Hashtbl.find tbl "Winner" with
-          | S s -> Some s
-          | _ -> failwith "bdecode_server" (*raise ReadError*) end with Not_found -> None
-        in GAMEOVER (i, s)
-    | _ -> raise ReadError
-
-  module WClient = struct
-    type t = client
-    let encode = bencode_client
-    let decode = bdecode_client
-  end
-
-  module WServer = struct
-    type t = server
-    let encode = bencode_server
-    let decode = bdecode_server
-  end
-
-  module Server =
-    Network.MakeUDP(Bencode.WrapRead(WClient))(Bencode.WrapShow(WServer))
-
-  module Client =
-    Network.MakeUDP(Bencode.WrapRead(WServer))(Bencode.WrapShow(WClient))
-
-end
-*)
