@@ -52,11 +52,14 @@ end
 
 module TCP = struct
 
+  exception Connection_closed
+
   module type S = sig
     type input
     type output
     type client
     type t
+    type server
 
     val send : t -> output -> unit Lwt.t
 
@@ -64,10 +67,21 @@ module TCP = struct
 
     val open_connection : addr -> t Lwt.t
 
-    val establish_server :
-        ?close:(client -> unit Lwt.t) -> addr
-        -> (client -> input Lwt_stream.t -> output Lwt_stream.t)
-        -> Lwt_io.server
+    val create_server : addr -> server
+
+    val join_event : server -> client Lwt_react.E.t
+    
+    val leave_event : server -> client Lwt_react.E.t
+
+    val shutdown_server : server -> unit
+
+    val read_client : server -> client -> input option Lwt.t
+
+    val write_client : server -> client -> output -> unit
+
+    val broadcast_client : server -> output -> unit
+
+    val reject_client : server -> client -> unit
   end
 
   module Make(Chan : CHANNEL) = struct
@@ -76,6 +90,9 @@ module TCP = struct
     type output = Chan.output
     type client = int
     type t = Lwt_io.input_channel * Lwt_io.output_channel
+    type server =
+      (client, input Lwt_stream.t * (output -> unit Lwt.t) * (unit -> unit Lwt.t))
+      Hashtbl.t * Lwt_io.server * client Lwt_react.E.t * client Lwt_react.E.t
 
     let send (_, output) v =
       Lwt_io.write_chars output (Chan.stream_of_output v)
@@ -86,30 +103,68 @@ module TCP = struct
     let open_connection addr =
       Lwt_io.open_connection addr
 
-    let establish_server
-      ?(close=fun _ -> return ())
-      addr
-      f =
+    let create_server addr =
       let cli_id = ref 0 in
-      Lwt_io.establish_server addr
+      let table = Hashtbl.create 17 in
+      let join, send_join = Lwt_react.E.create ()
+      and leave, send_leave = Lwt_react.E.create () in
+      let server = Lwt_io.establish_server addr
         (fun (input, output) ->
-          Lwt.ignore_result begin
-            let id = !cli_id in
-            cli_id := id + 1;
-            let stream = Lwt_stream.from (fun () ->
-              Chan.input_of_stream (Lwt_io.read_chars input)) in
-              Lwt_stream.fold_s (fun v () ->
-                Lwt_io.write_chars output
-                  (Chan.stream_of_output v))
-              (f id stream) () >>= fun () ->
-                catch (fun () ->
-                  Lwt_io.close input >>= fun () ->
-                  Lwt_io.close output >>= fun () ->
-                  return id)
-                (function
-                  | Unix.Unix_error (Unix.ENOTCONN, _, _) -> return id
-                  | e -> fail e) >>= close
-          end)
+          let id = !cli_id in
+          cli_id := id + 1;
+          let close () =
+            try_lwt
+              Hashtbl.remove table id;
+              send_leave id;
+              Lwt_io.close input >>
+              Lwt_io.close output
+            with Unix.Unix_error (Unix.ENOTCONN, _, _) -> return () in
+          let input_stream =
+            Lwt_stream.from (fun () ->
+              Lwt_io.atomic (fun inp ->
+                Chan.input_of_stream (Lwt_io.read_chars inp)) input >>= function
+                  | Some x -> return (Some x)
+                  | None -> close () >> return None)
+          and push v =
+            Lwt_io.atomic
+              (fun out -> Lwt_io.write_chars out (Chan.stream_of_output v))
+              output
+          in Hashtbl.add table id (input_stream, push, close);
+          send_join id) in
+      (table, server, join, leave)
+
+  let join_event (_, _, join, _) = join
+
+  let leave_event (_, _, _, leave) = leave
+
+  let shutdown_server (_, server, _, _) =
+    Lwt_io.shutdown_server server
+
+  let read_client (table, _, _, _) id =
+    try
+      let (stream, _, _) = Hashtbl.find table id in
+      Lwt_stream.get stream
+    with Not_found -> return None
+
+  let write_client (table, _, _, _) id v =
+    Lwt.async (fun () -> try
+      let (_, push, _) = Hashtbl.find table id in
+      push v
+    with Not_found -> fail Connection_closed)
+
+  let broadcast_client (table, _, _, _) v =
+    let threads = Hashtbl.fold
+      (fun _ (_, push, _) streams -> push v :: streams)
+      table
+      []
+    in Lwt.async (fun () -> Lwt.join threads)
+
+  let reject_client (table, _, _, _) id =
+    try
+      let (_, _, close) = Hashtbl.find table id in
+      Lwt.async close
+    with Not_found -> ()
+
   end
 
 end

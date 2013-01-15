@@ -88,6 +88,8 @@ module Server = struct
 
   let main addr =
     let servers = Games.create 17 in
+    let tcp = TCP.create_server addr in
+    Lwt_react.E.map_p (remove_from servers) (TCP.leave_event tcp)
     TCP.establish_server
       ~close:(fun cli -> remove_from servers cli)
       addr

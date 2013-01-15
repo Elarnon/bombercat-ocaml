@@ -34,10 +34,14 @@ module type CHANNEL = sig
 end
 
 module TCP : sig
+
+  exception Connection_closed
+
   module type S = sig
     type input
     type output
     type client
+    type server
     type t
 
     val send : t -> output -> unit Lwt.t
@@ -46,10 +50,21 @@ module TCP : sig
 
     val open_connection : addr -> t Lwt.t
 
-    val establish_server :
-        ?close:(client -> unit Lwt.t) -> addr ->
-        (client -> input Lwt_stream.t -> output Lwt_stream.t)  ->
-        Lwt_io.server
+    val create_server : addr -> server
+
+    val join_event : server -> client Lwt_react.E.t
+    
+    val leave_event : server -> client Lwt_react.E.t
+
+    val shutdown_server : server -> unit
+
+    val read_client : server -> client -> input option Lwt.t
+
+    val write_client : server -> client -> output -> unit
+
+    val broadcast_client : server -> output -> unit
+
+    val reject_client : server -> client -> unit
   end
 
   module Make(Chan : CHANNEL) : S with

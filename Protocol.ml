@@ -51,16 +51,16 @@ module Meta = struct
     | L ( S "ADD" :: S ip :: I port :: S name :: I nb_players :: _ ) ->
         mk_addr ~port ip >>= fun addr -> (* TODO: try/catch *)
         if nb_players < 0
-        then none
-        else some (ADD (addr, name, nb_players))
+        then failwith "Meta.decode_client"
+        else return (ADD (addr, name, nb_players))
     | L ( S "UPDATE" :: I game_id :: I nb_players :: _ ) ->
         if nb_players < 1
-        then none
-        else some (UPDATE (game_id, nb_players))
+        then failwith "Meta.decode_client"
+        else return (UPDATE (game_id, nb_players))
     | L ( S "DELETE" :: I game_id :: _ ) ->
-        some (DELETE game_id)
-    | S "LIST" -> some LIST
-    | v -> none
+        return (DELETE game_id)
+    | S "LIST" -> return LIST
+    | v -> failwith "Meta.decode_client"
 
   let bencode_game g =
     let open Bencode in
@@ -84,15 +84,15 @@ module Meta = struct
         match (bid, bip, bport, bname, bnb_players) with
         | I id, S ip, I port, S name, I players when players > 0 ->
             mk_addr ip ~port >>= fun game_addr ->
-            some { game_id = id
+            return { game_id = id
             ; game_addr
             ; game_name = name
             ; game_nb_players = players
             }
-        | _ -> none
-      with Not_found -> none
+        | _ -> failwith "bdecode_game"
+      with Not_found -> failwith "bdecode_game"
     end
-    | _ -> none
+    | _ -> failwith "bdecode_game"
 
   let encode_server = let open Bencode in function
     | ADDED id -> L [ S "ADDED"; I id ]
@@ -100,21 +100,27 @@ module Meta = struct
         L (S "GAMES" :: List.map bencode_game games)
 
   let decode_server = let open Bencode in function
-    | L [ S "ADDED"; I id ] -> some (ADDED id)
+    | L [ S "ADDED"; I id ] -> return (ADDED id)
     | L (S "GAMES" :: q) ->
         Lwt_list.map_p bdecode_game q >>= fun games ->
-        Lwt_list.fold_left_s (fun res game ->
-          match res, game with
-          | None, _ | _, None -> none
-          | Some l, Some g -> some ( g:: l )) (Some []) games >>>= fun gs ->
-        some (GAMES gs)
-    | _ -> none
+        return (GAMES games)
+    | _ -> failwith "decode_server"
 
   module Server = struct
     type input = client
     type output = server
 
-    let input_of_stream s = Bencode.of_stream s >>>= decode_client
+    let input_of_stream s =
+      try_lwt
+        Bencode.of_stream s >>= decode_client >|= fun x -> Some x
+      with
+        | Bencode.Format_error ->
+            Lwt_log.error
+              ("Bencode format error while decoding Meta client.") >>
+            return_none
+        | Error where ->
+            Lwt_log.error ("Protocol.Meta.Server error in " ^ where) >>
+            return_none
 
     let stream_of_output v = Bencode.to_stream (encode_server v)
   end
@@ -123,7 +129,17 @@ module Meta = struct
     type input = server
     type output = client
 
-    let input_of_stream s = Bencode.of_stream s >>>= decode_server
+    let input_of_stream s =
+      try_lwt
+        Bencode.of_stream s >>= decode_server >|= fun x -> Some x
+      with
+        | Bencode.Format_error ->
+            Lwt_log.error
+              ("Bencode format error while decoding Meta server.") >>
+            return_none
+        | Error where ->
+            Lwt_log.error ("Protocol.Meta.Client error in " ^ where) >>
+            return_none
 
     let stream_of_output v = Bencode.to_stream (encode_client v)
   end
@@ -192,7 +208,7 @@ module Initialisation = struct
     | REJECTED of string
     | OK of string * Data.map * params
     | JOIN of string * string * char
-    | START of string
+    | START of Unix.tm * int
     | QUIT of string
 
   let bencode_client = let open Bencode in function
@@ -207,8 +223,8 @@ module Initialisation = struct
               | I i when i > 0 -> return i
               | _ -> failwith "bdecode_client")
             bversions
-	in versions >>= fun v -> some @$ HELLO (pseudo, v)
-    | _ -> none
+	in versions >>= fun v -> return @$ HELLO (pseudo, v)
+    | _ -> failwith "bdecode_client"
 
   let bencode_server = let open Bencode in function
     | REJECTED reason -> L [ S "REJECTED"; S reason ]
@@ -216,30 +232,55 @@ module Initialisation = struct
         L [ S "OK"; S id; S (Data.string_of_map map); bencode_params params ]
     | JOIN (pseudo, id, pos) ->
         L [ S "JOIN"; S pseudo; S id; S (String.make 1 pos) ]
-    | START date ->
-        L [ S "START"; S date ]
+    | START (date, nano) ->
+        let open Unix in
+        let { tm_sec ; tm_min ; tm_hour ; tm_mday ; tm_mon ; tm_year ; _ } =
+          date in
+        let str = Format.sprintf
+          "%04d-%02d-%02d %02d:%02d:%02d:%04d"
+          (1900 + tm_year) tm_mon tm_mday tm_hour tm_min tm_sec nano in
+        L [ S "START"; S str ]
     | QUIT ident ->
         L [ S "QUIT"; S ident ]
 
   let bdecode_server = let open Bencode in function
-    | L [ S "REJECTED"; S reason ] -> some @$ REJECTED reason
+    | L [ S "REJECTED"; S reason ] -> return @$ REJECTED reason
     | L [ S "OK"; S id; S smap; bparams ] ->
 	bdecode_params bparams >>= fun p ->
-        some @$ OK (id, Data.map_of_string smap, p)
-    | L [ S "JOIN"; S pseudo; S id; S pos ] when
-      String.length pos = 1 && pos.[0] >= 'A' && pos.[0] <= 'Z' ->
-        some @$ JOIN (pseudo, id, pos.[0])
-    | L [ S "START"; S date ] ->
-        some @$ START date
+        return @$ OK (id, Data.map_of_string smap, p)
+    | L [ S "JOIN"; S pseudo; S id; S pos ] (* when *) ->
+      (* String.length pos = 1 && pos.[0] >= 'A' && pos.[0] <= 'Z' -> *)
+        return @$ JOIN (pseudo, id, pos.[0])
+    | L [ S "START"; S strdate ] ->
+        let open Unix in
+        begin try
+          return @$
+          Scanf.sscanf strdate "%04d-%02d-%02d %02d:%02d:%02d:%04d"
+            (fun tm_year tm_mon tm_mday tm_hour tm_min tm_sec nano ->
+              let raw = { tm_sec; tm_min; tm_hour; tm_mday; tm_mon;
+              tm_year = tm_year - 1900; tm_yday = 0; tm_wday = 0;
+              tm_isdst = false } in
+              START (snd (Unix.mktime raw), nano))
+        with Scanf.Scan_failure _ -> failwith "bdecode_server start date" end
     | L [ S "QUIT"; S ident ] ->
-        some @$ QUIT ident
-    | _ -> none
+        return @$ QUIT ident
+    | _ -> failwith "bdecode_server"
 
   module Server = struct
     type input = client
     type output = server
 
-    let input_of_stream s = Bencode.of_stream s >>>= bdecode_client
+    let input_of_stream s =
+      try_lwt
+        Bencode.of_stream s >>= bdecode_client >|= fun x -> Some x
+      with
+        | Bencode.Format_error ->
+            Lwt_log.error 
+              "Bencode format error while decoding Init client." >>
+            return_none
+        | Error where ->
+            Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where) >>
+            return_none
 
     let stream_of_output v = Bencode.to_stream (bencode_server v)
   end
@@ -248,7 +289,17 @@ module Initialisation = struct
     type input = server
     type output = client
 
-    let input_of_stream s = Bencode.of_stream s >>>= bdecode_server
+    let input_of_stream s =
+      try_lwt
+        Bencode.of_stream s >>= bdecode_server >|= fun x -> Some x
+      with
+        | Bencode.Format_error ->
+            Lwt_log.error
+              "Bencode format error while decoding Init server." >>
+            return_none
+        | Error where ->
+            Lwt_log.error ("Protocol.Meta.Initialisation error in " ^ where) >>
+            return_none
 
     let stream_of_output v = Bencode.to_stream (bencode_client v)
   end

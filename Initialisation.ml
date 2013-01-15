@@ -9,41 +9,58 @@ module Server = struct
   module TCP = Network.TCP.Make(Protocol.Initialisation.Server)
 
   type 'a state =
+    (* Identifier sequence to make them unique *)
     { mutable next_id : int
+    (* Set of available characters on the map *)
     ; available : (char, unit) Hashtbl.t
+    (* The world map *)
     ; map : Data.map
+    (* Game parameters *)
     ; params : params
-    ; mutable nb_players : int
+    (* All registered players *)
     ; players : (string, string * char) Hashtbl.t
-    ; broadcast : Protocol.Initialisation.server -> unit
+    ; update : unit Lwt_condition.t
+    ; start : (Unix.tm * int) Lwt_condition.t
+    ; joins : (string * string * char) Lwt_condition.t
+    (* Message broadcast function. Authentified and anonymous clients both
+     * receives the message. *)
+    ; broadcast : Protocol.Initialisation.server option -> unit
     }
 
   let mk_state map params push =
-    let available =  Hashtbl.create 17 in
+    let available = Hashtbl.create 17 in
     Hashtbl.iter (fun k _ -> Hashtbl.add available k ()) map.Data.players;
-    { next_id = int_of_char 'A'
+    { next_id = 0
     ; available
     ; map
     ; params
-    ; nb_players = 0
     ; players = Hashtbl.create 17
-    ; broadcast = fun x -> push (Some x)
+    ; update = Lwt_condition.create ()
+    ; broadcast = push 
+    ; start = Lwt_condition.create ()
+    ; joins = Lwt_condition.create ()
     }
 
-  let nb_players { nb_players; _ } = nb_players
+  let nb_players { players; _ } = Hashtbl.length players
 
   let max_players { map ; _ } = Hashtbl.length map.Data.players
 
-  let rec treat_message cid state = function
+  (* Treat message as authentified user [cid] in state [state] *)
+  let treat_message cid state = function
     | HELLO _ ->
-        (Some cid, [REJECTED "Already a connection there. Open another connection."])
-  and treat_end cid state () =
-    (* TODO: catch Not_found *)
-    let _, chr = Hashtbl.find state.players cid in
-    state.broadcast (QUIT cid);
+        (Some cid, [REJECTED "There can be only one user per connection."])
+
+  (* Treat end of TCP connection as authentified user [cid] in state [state] *)
+  let treat_end cid state () =
+    let _, chr =
+      try Hashtbl.find state.players cid
+      with Not_found -> assert false (* TODO ? *) in
+    (* Remove player from world *)
     Hashtbl.remove state.players cid;
+    (* Mark its position as available again *)
     Hashtbl.add state.available chr ();
-    state.nb_players <- state.nb_players - 1;
+    (* Broadcast quitting *)
+    state.broadcast (Some (QUIT cid));
     (* TODO: send update to meta server *)
     return ()
 
@@ -52,55 +69,91 @@ module Server = struct
   let treat_anonymous_message state = function
     | HELLO (pseudo, versions) ->
         (* Protocol check *)
-        if not (List.mem 1 versions) then begin
+        if not (List.mem 1 versions) then 
           (None, [REJECTED ("Only version 1 of the protocol is supported by this"
             ^ " server.")])
-        (* TODO: check that the pseudo is available *)
-        (* TODO: check that there is only one player per connection (?) *)
-        (* Are there still places available ? *)
-        end else if nb_players state < max_players state then begin
-          (* Compute ID *)
-          let c = try
-            Hashtbl.iter (fun k () -> raise (Found k)) state.available;
-            failwith "Very bad. Inconsistency."
-          with Found k -> k in
-          let s = String.make 1 (char_of_int state.next_id) in
-          (* Update broadcast function to get broadcast messages *)
-          (* Get JOIN to send back from other players *)
-          let joins = Hashtbl.fold
-            (fun o_id (o_pseudo, o_pos) l ->
-              JOIN (o_pseudo, o_id, o_pos) :: l)
-            state.players [] in
-          (* Broadcast join message *)
-          state.broadcast (JOIN (pseudo, s, c));
-          (* Add player *)
-          state.nb_players <- state.nb_players + 1;
-          state.next_id <- state.next_id + 1;
-          Hashtbl.add state.players s (pseudo, c);
-          (* Send messages *)
-          (Some s, (OK (s, state.map, state.params) :: joins))
-        end else begin
+          (* Are there still places available ? *)
+        else if nb_players state >= max_players state then 
           (None, [REJECTED "There is no room for an additional player."])
-        end
+        else
+          (* Check that the pseudo is available *)
+          let duplicated =
+            Hashtbl.fold
+              (fun _ (o, _) v -> v || o = pseudo)
+              state.players
+              false in
+          if duplicated then
+            (None, [REJECTED "There is already a player with this pseudo."])
+          else begin
+            (* Compute ID *)
+            let c = try
+              Hashtbl.iter (fun k () -> raise (Found k)) state.available;
+              (* Impossible: [nb_players state < max_players state] here *)
+              assert false
+            with Found k -> k in
+            Hashtbl.remove state.available c;
+            let s = string_of_int state.next_id in
+            state.next_id <- state.next_id + 1;
+            (* Get JOIN to send back from other players *)
+            let joins = Hashtbl.fold
+              (fun o_id (o_pseudo, o_pos) l ->
+                JOIN (o_pseudo, o_id, o_pos) :: l)
+              state.players [] in
+            (* Broadcast join message *)
+            state.broadcast (Some (JOIN (pseudo, s, c)));
+            Hashtbl.add state.players s (pseudo, c);
+            Lwt_condition.broadcast state.joins (pseudo, s, c);
+            (* Send messages *)
+            (Some s, (OK (s, state.map, state.params) :: joins))
+          end
 
   let treat state stream =
-    let out, push = Lwt_stream.create () in
+    let out, push, set_ref = Lwt_stream.create_with_reference () in
+    let client_stream = Lwt_stream.map (fun x -> `Client x) stream
+    and server_stream = Lwt_stream.from (fun () ->
+      let start_ = Lwt_condition.wait state.start >|= fun (x,y) -> `Start (x,y)
+      and join_  = Lwt_condition.wait state.joins >|= fun x -> `Join x
+      in Lwt.choose [ start_; join_ ] >|= fun x -> Some x) in
+    let real_stream = merge [ client_stream ; server_stream ] in
     let rec treat_input do_message do_end =
-      Lwt_stream.get stream >>= (function
-        | Some msg -> 
+      Lwt_stream.get real_stream >>= function
+        | Some (`Client msg) -> 
             let cli, lst = do_message state msg in
-            push (Some lst);
+            Lwt_list.iter_s (fun e -> return (push (Some e))) lst >>=
+            fun () -> Lwt_condition.broadcast state.update ();
             begin match cli with
               | Some s -> treat_input (treat_message s) (treat_end s)
               | None -> treat_input treat_anonymous_message (fun _ -> return)
             end
-        | None -> push None; do_end state ())
-    in Lwt.ignore_result (treat_input treat_anonymous_message (fun _ -> return));
-       out
+        | Some (`Start (x,y)) ->
+            Lwt_log.debug "START." >>= fun () ->
+            push (Some (START (x, y)));
+            (* push None; *)
+            return ()
+        | Some (`Join (s, s', c)) ->
+            push (Some (JOIN (s, s', c)));
+            treat_input do_message do_end
+        | None -> push None; do_end state ()
+    in
+    set_ref (treat_input treat_anonymous_message (fun _ -> return));
+    out
+
+  let rec handle_server server state =
+    Lwt_condition.wait state.update >>
+    if nb_players state = max_players state then begin
+      (* Ready to start ! *)
+      (* Lwt_io.shutdown_server server; *)
+      let (nanof, datef) = modf (Unix.gettimeofday ()) in
+      let date = Unix.gmtime datef in
+      let nano = int_of_float (nanof *. 10000.) in
+      Lwt_condition.broadcast state.start (date, nano);
+      return (date, nano)
+    end else
+      handle_server server state
 
   let main addr =
     Unix.handle_unix_error (fun () ->
-    (* Load the world, TODO *)
+    (* Load the world, TODO ? *)
     Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
     let map = Data.map_of_string s in
     let params =
@@ -123,33 +176,11 @@ module Server = struct
     let push msg =
       Hashtbl.iter (fun _ push -> push msg) streams in
     let state = mk_state map params push in
-    TCP.establish_server
-      ~close:(fun cli -> remove_stream cli; return ())
+    let server = TCP.establish_server
+      ~close:(fun cli -> remove_stream cli; Lwt_log.debug "END.\n" >> return ())
       addr
-      (fun client stream ->
-        let others_stream = add_stream client in
-        let client_stream = Lwt_stream.flatten (treat state stream) in
-        let with_stream s = Lwt_stream.peek s >>= fun x -> return (x, s) in
-        Lwt_stream.from (fun () ->
-          let from_client = with_stream client_stream
-          and from_others = with_stream others_stream in
-          from_client <?> from_others >>= fun (x, s) ->
-          Lwt_stream.junk s >> return x))
+      (fun client stream -> treat state stream)
+    in handle_server server state
   ) ()
 
 end
-
-(* Basically :
-  There is a Lwt thread for the server, that do different checks to see if the
-  game is full or stuff like that, and send the START message when feeling OK.
-  The thread will then shut off the connections (allowing for the pending
-  messages to be sent, though), wait the delay indicated in the parameters
-  dictionary, then start the UPD game server. Yay!
-
-  There also is a Lwt thread for each client, that wait for two things : JOIN
-  messages from its client, or messages from the server to broadcast. When
-  receiving a START message to broadcast, this thread closes the connection
-  with its associated client and dies. I hope I can copy a push stream. If
-  needed, I will have a stream per client and feed it back (simulated *outside*
-  of state ?)
-*)

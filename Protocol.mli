@@ -1,3 +1,5 @@
+exception Error of string
+
 module Meta : sig
   type game =
     { game_id : int
@@ -16,11 +18,11 @@ module Meta : sig
     | ADDED of int
     | GAMES of game list
 
-  val decode_client : Bencode.t -> client option Lwt.t
+  val decode_client : Bencode.t -> client Lwt.t
 
   val encode_client : client -> Bencode.t
 
-  val decode_server : Bencode.t -> server option Lwt.t
+  val decode_server : Bencode.t -> server Lwt.t
 
   val encode_server : server -> Bencode.t
 
@@ -52,7 +54,7 @@ module Initialisation : sig
     | REJECTED of string
     | OK of string * Data.map * params
     | JOIN of string * string * char
-    | START of string
+    | START of Unix.tm * int
     | QUIT of string
 
   module Server : Network.CHANNEL with
