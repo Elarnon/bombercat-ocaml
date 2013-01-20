@@ -1,15 +1,5 @@
 open Lwt
 
-let some x = return (Some x)
-
-let none = return None
-
-let (>>>=) t f =
-  t >>= function
-    | Some v -> f v
-    | None -> none
-
-
 let (@$) f x = f x
 
 let merge ?(quit=false) streams =
@@ -43,3 +33,10 @@ let merge ?(quit=false) streams =
             ended := ended_; running := running'; step ()
           end
   in Lwt_stream.from step
+
+let wrap_eintr f =
+  let rec loop () =
+    try_lwt
+      f ()
+    with Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
+  in loop

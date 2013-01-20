@@ -1,15 +1,30 @@
-val server : Network.addr -> Lwt_io.server
+module Server : sig
+  (** Type representing a Meta server *)
+  type server
+
+  (** Creates a new Meta server listening on the given address *)
+  val create : Network.addr -> server
+
+  (** Closes a Meta server *)
+  val shutdown : server -> unit
+
+end
 
 module Client : sig
-  module TCP : Network.TCP.S
+  module Connection : Network.TCP.S
 
+  (** Send an ADD message to the Meta server connected and returns the
+   * answer of the server *)
   val add :
-    TCP.t -> addr:Network.addr -> name:string -> nb_players:int
+    Connection.t -> addr:Network.addr -> name:string -> nb_players:int
     -> Protocol.Meta.game option Lwt.t
 
-  val update : TCP.t -> id:int -> nb_players:int -> unit Lwt.t
+  (** Asynchronously send an UPDATE message to the Meta server *)
+  val update : Connection.t -> id:int -> nb_players:int -> unit
 
-  val delete : TCP.t -> id:int -> unit Lwt.t
+  (** Asynchronously send a DELETE message to the Meta server *)
+  val delete : Connection.t -> id:int -> unit
 
-  val list_games : TCP.t -> Protocol.Meta.game list option Lwt.t
+  (** List games from the Meta server *)
+  val list_games : Connection.t -> Protocol.Meta.game list option Lwt.t
 end 

@@ -88,7 +88,8 @@ and read_bdict s hash last =
         read_bstring s >>= fun key ->
         (* TODO *)
         begin if Some key <= last then
-          Lwt_log.debug "Illegal key order in bencoded dict. Reading anyway."
+          Lwt_log.error ("Illegal key order in bencoded dictionary. Reading " ^
+            "anyway for compatibility.")
         else return () end >>
         read_bencode s >>= fun v ->
         Hashtbl.add hash key v;
@@ -142,9 +143,11 @@ let rec to_stream = function
       let contents = S.concat (S.map to_stream (S.of_list l)) in
       S.append (S.of_string "l") (S.append contents (S.of_string "e"))
   | D h ->
-      let beginning = Hashtbl.fold (fun k v s ->
+      let module Smap = Map.Make(String) in
+      let smap = Hashtbl.fold Smap.add h Smap.empty in
+      let beginning = Smap.fold (fun k v s ->
         S.append s (S.append (to_stream (S k)) (to_stream v)))
-        h (S.of_string "d") in
+        smap (S.of_string "d") in
       S.append beginning (S.of_string "e")
 
 let of_string s =
