@@ -5,35 +5,56 @@ module U = Lwt_unix
 
 type addr = U.sockaddr
 
+(* Raises Not_found -- TODO ? *)
 let dns_resolve addr =
-  (* TODO: Not_found ??? *)
-  U.gethostbyname addr >>= fun host ->
+  lwt host = U.gethostbyname addr in
   let l = host.U.h_addr_list in
-  if Array.length l = 0
-  then fail Not_found (* TODO *)
-  else return l.(Random.int (Array.length l))
+  let len = Array.length l in
+  if len = 0
+    then fail Not_found
+    else return l.(Random.int len)
 
 let mk_addr ?(port=6669) addr =
-  dns_resolve addr >>= fun ip ->
-  return (U.ADDR_INET (ip, port))
+  lwt ip =
+    try_lwt
+      return @$ Unix.inet_addr_of_string addr
+    with Failure _ -> dns_resolve addr
+  in return @$ U.ADDR_INET (ip, port)
 
 let parse_addr s =
   let l = String.length s in
   let i =
     try String.rindex s ':' with Not_found -> l
   in
-  let addr = String.sub s 0 i in
-  let port =
-    if i = l then None
+  let first_colon =
+    try Some (String.index s ':') with Not_found -> None
+  in
+  let start_port, addr =
+    if first_colon = Some i
+    then (* IPv4 or domain name - single colon *)
+        i, String.sub s 0 i
+    else (* IPv6 -- detect if port number is present *)
+      if l > 0 && s.[0] = '[' && s.[i - 1] == ']'
+      then (* IPv6 with port of the form "[IPv6]:port" *)
+        i, String.sub s 1 (i - 1)
+      else (* Assume raw IPv6 *)
+        l, s
+  in let port =
+    if start_port = l then None
     else try
-      Some (int_of_string (String.sub s (i + 1) (l - i - 1)))
+      let v = int_of_string (String.sub s (i + 1) (l - i - 1)) in
+      if v < 0 then raise Not_found
+      else Some v
     with Failure "int_of_string" -> raise Not_found
   in mk_addr ?port addr
 
+(* TODO: check raw IP and not domain name in case of PF_INET6 *)
 let string_of_addr addr =
   let open U in
-  getnameinfo addr [] >>= fun ni ->
-  return (ni.ni_hostname ^ ":" ^ ni.ni_service)
+  lwt ni = getnameinfo addr [] in
+  match Unix.domain_of_sockaddr addr with
+  | PF_INET6 -> return @$ "[" ^ ni.ni_hostname ^ "]:" ^ ni.ni_service
+  | _ -> return @$ ni.ni_hostname ^ ":" ^ ni.ni_service
 
 let raw_addr addr =
   let open U in
@@ -155,12 +176,13 @@ module UDP = struct
     type t = U.file_descr
 
     let create ?(addr=U.ADDR_INET (Unix.inet_addr_any, 0)) () =
-      U.socket Unix.PF_INET Unix.SOCK_DGRAM 0
+      let domain = Unix.domain_of_sockaddr addr in
+      U.socket domain Unix.SOCK_DGRAM 0
 
     let close = U.close
 
     let sendto fdescr out addr =
-      Lwt_stream.to_string (Chan.stream_of_output out) >>= fun str ->
+      lwt str = Lwt_stream.to_string (Chan.stream_of_output out) in
       let len = String.length str in
       if len > 65536 then return false else begin
         Lwt.async (wrap_eintr (fun () ->
@@ -172,6 +194,8 @@ module UDP = struct
       end
 
     let rec recvfrom fdescr =
+      (* We have to make a new buffer each time because there are potentially
+       * multiple instances of [recvfrom] running in parallel *)
       let buffer = String.make 65536 ' ' in
       wrap_eintr (fun () ->
         match U.state fdescr with
