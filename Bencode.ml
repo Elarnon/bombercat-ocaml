@@ -7,7 +7,7 @@ type t =
   | S of string
   | I of int 
   | L of t list
-  | D of (string, t) Hashtbl.t
+  | D of t Smap.t
 
 type bencoded = private string
 
@@ -81,19 +81,18 @@ let rec read_blist s acc =
       read_bencode s >>= fun v ->
       read_blist s (v :: acc)
   
-and read_bdict s hash last =
+and read_bdict s map last =
   S.peek s >>= function
-    | Some 'e' -> S.junk s >>= fun () -> return hash
+    | Some 'e' -> S.junk s >> return map
     | Some c ->
-        read_bstring s >>= fun key ->
+        lwt key = read_bstring s in
         (* TODO *)
         begin if Some key <= last then
           Lwt_log.error ("Illegal key order in bencoded dictionary. Reading " ^
             "anyway for compatibility.")
         else return () end >>
-        read_bencode s >>= fun v ->
-        Hashtbl.add hash key v;
-        read_bdict s hash (Some key)
+        lwt v = read_bencode s in
+        read_bdict s (Smap.add key v map) (Some key)
     | None ->
         fail Lwt_stream.Empty
 
@@ -114,7 +113,7 @@ and read_bencode s =
         read_blist s [] >>= fun l -> return (L l)
     | Some 'd' ->
         S.junk s >>= fun () ->
-        read_bdict s (Hashtbl.create 17) None >>= fun d -> return (D d)
+        read_bdict s Smap.empty None >|= fun d -> D d
     | Some c when '0' <= c && c <= '9' ->
         read_bstring s >>= fun s -> return (S s)
     | Some '\n' ->
@@ -142,12 +141,10 @@ let rec to_stream = function
   | L l -> (* [< "l"; concatMap to_stream l; "e" >] *)
       let contents = S.concat (S.map to_stream (S.of_list l)) in
       S.append (S.of_string "l") (S.append contents (S.of_string "e"))
-  | D h ->
-      let module Smap = Map.Make(String) in
-      let smap = Hashtbl.fold Smap.add h Smap.empty in
+  | D m ->
       let beginning = Smap.fold (fun k v s ->
         S.append s (S.append (to_stream (S k)) (to_stream v)))
-        smap (S.of_string "d") in
+        m (S.of_string "d") in
       S.append beginning (S.of_string "e")
 
 let of_string s =

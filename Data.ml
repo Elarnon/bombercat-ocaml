@@ -34,16 +34,27 @@ let after_move map player (x, y) dir =
       if y < map.height - 1 then Some (x, y + 1) else None
   else None
 
-let is_free map (x, y) =
-  try map.content.(x).(y) = Empty with Invalid_argument _ -> false
+let content_in lst map (x, y) =
+  try List.mem map.content.(x).(y) lst with Invalid_argument _ -> false
+
+let is_free_for_move map pos =
+  content_in [ Empty ] map pos
+
+let is_free_for_bomb map pos =
+  content_in [ Empty ] map pos
 
 let try_move map player pos dir =
   match after_move map player pos dir with
     | None -> false
     | Some pos ->
-      if is_free map pos then begin
+      if is_free_for_move map pos then begin
         Hashtbl.replace map.players player pos; true
       end else false
+
+let try_bomb map player ((x, y) as pos) timer =
+  if check_pos map player pos && is_free_for_bomb map pos then begin
+    map.content.(x).(y) <- Bomb timer; true
+  end else false
 
 exception InvalidMap
 

@@ -74,28 +74,27 @@ module Game : sig
 
   type pos = int * int
 
-  type client =
+  type client_command =
     | MOVE of pos * dir
     | BOMB of pos
-    | SYNC of int
+
+  type client_raw =
+    | RAW_COMMAND of client_command
+    | RAW_SYNC of int
+
+  type client =
+    | COMMAND of string * int * int * client_command
+    | SYNC of string * int
 
   type action =
-    | CLIENT of client
+    | CLIENT of client_raw
     | NOP of int
     | DEAD
 
   type stats =
-    { winner : string }
+    { winner : string option }
 
   type server =
-    | TURN of int * (string, action list) Hashtbl.t
+    | TURN of int * action list Map.Make(String).t
     | GAMEOVER of int * stats
-
-  module Server : Network.CHANNEL with
-    type input = client and
-    type output = server
-
-  module Client : Network.CHANNEL with
-    type input = server and
-    type output = client
 end 

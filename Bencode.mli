@@ -7,7 +7,7 @@ type t =
   (** A list of bencodables values *)
   | L of t list
   (** A dictionary from strings to bencodables values *)
-  | D of (string, t) Hashtbl.t
+  | D of t Map.Make(String).t
 
 (** A bencoded value simply is a string *)
 type bencoded = private string

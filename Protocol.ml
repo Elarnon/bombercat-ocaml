@@ -1,6 +1,7 @@
 open Lwt
 open Network
 open Misc
+open Bencode
 
 exception Error of string
 
@@ -84,27 +85,21 @@ module Meta = struct
   let bencode_game g =
     let open Bencode in
     let (ip, port) = raw_addr g.game_addr in
-    let tbl = Hashtbl.create 17 in
-    Hashtbl.add tbl "Id" (I g.game_id);
-    Hashtbl.add tbl "Ip" (S ip);
-    Hashtbl.add tbl "Port" (I port);
-    Hashtbl.add tbl "Name" (S g.game_name);
-    Hashtbl.add tbl "Players" (I g.game_nb_players);
-    Hashtbl.add tbl "MaxPlayers" (I g.game_max_players);
-    D tbl
+    D (map_of_list
+      [ ("Id", I g.game_id)
+      ; ("Ip", S ip)
+      ; ("Port", I port)
+      ; ("Name", S g.game_name)
+      ; ("Players", I g.game_nb_players)
+      ; ("MaxPlayers", I g.game_max_players)
+      ])
 
   let bdecode_game = let open Bencode in function
-    | D tbl -> begin
+    | D m -> begin
       try
-        let bid = Hashtbl.find tbl "Id"
-        and bip = Hashtbl.find tbl "Ip"
-        and bport = Hashtbl.find tbl "Port"
-        and bname = Hashtbl.find tbl "Name"
-        and bnb_players = Hashtbl.find tbl "Players"
-        and bmax = Hashtbl.find tbl "MaxPlayers" in
-        match (bid, bip, bport, bname, bnb_players, bmax) with
-        | I id, S ip, I port, S name, I players, I max_players when
-          players > 0 && max_players >= players ->
+        match gets ["Id"; "Ip"; "Port"; "Name"; "Players"; "MaxPlayers"] m with
+        | [I id; S ip; I port; S name; I players; I max_players] when
+          players >= 0 && max_players >= players && max_players > 0 ->
             lwt game_addr = mk_addr ip ~port in
             return
               { game_id = id
@@ -187,34 +182,23 @@ module Initialisation = struct
     }
 
   let bencode_params p =
-    let open Bencode in
-    let open Hashtbl in
-    let tbl = create 17 in
-    add tbl "GameTime" (I p.p_game_time);
-    add tbl "BombExplosionTime" (I p.p_bomb_time);
-    add tbl "BombExplosionDistance" (I p.p_bomb_dist);
-    add tbl "MapWidth" (I p.p_map_width);
-    add tbl "MapHeight" (I p.p_map_height);
-    add tbl "TurnTime" (I p.p_turn_time);
-    add tbl "StartDelay" (I p.p_start_delay);
-    add tbl "ProtocolVersion" (I p.p_version);
-    D tbl
+    D (map_of_list
+      [ ("GameTime", I p.p_game_time)
+      ; ("BombExplosionTime", I p.p_bomb_time)
+      ; ("MapWidth", I p.p_map_width)
+      ; ("MapHeight", I p.p_map_height)
+      ; ("TurnTime", I p.p_turn_time)
+      ; ("StartDelay", I p.p_start_delay)
+      ; ("ProtocolVersion", I p.p_version)
+      ])
 
   let bdecode_params = let open Bencode in function
     | D tbl -> begin
         try
-          let open Hashtbl in
-          match (
-            find tbl "GameTime",
-            find tbl "BombExplosionTime",
-            find tbl "BombExplosionDistance",
-            find tbl "MapWidth",
-            find tbl "MapHeight",
-            find tbl "TurnTime",
-            find tbl "StartDelay",
-            find tbl "ProtocolVersion"
-          ) with
-          | I gt, I bet, I bed, I mw, I mh, I tt, I sd, I pv ->
+          match gets ["GameTime"; "BombExplosionTime"; "BombExplosionDistance";
+                      "MapWidth"; "MapHeight"; "TurnTime"; "StartDelay";
+                      "ProtocolVersion" ] tbl with
+          | [I gt; I bet; I bed; I mw; I mh; I tt; I sd; I pv] ->
 	      return
               { p_game_time = gt
               ; p_bomb_time = bet
@@ -341,21 +325,28 @@ module Game = struct
 
   type pos = int * int
 
-  type client =
+  type client_command =
     | MOVE of pos * dir
     | BOMB of pos
-    | SYNC of int
+
+  type client_raw =
+    | RAW_COMMAND of client_command
+    | RAW_SYNC of int
+
+  type client =
+    | COMMAND of string * int * int * client_command
+    | SYNC of string * int
 
   type action =
-    | CLIENT of client
+    | CLIENT of client_raw
     | NOP of int
     | DEAD
 
   type stats =
-    { winner : string }
+    { winner : string option }
 
   type server =
-    | TURN of int * (string, action list) Hashtbl.t
+    | TURN of int * action list Smap.t (* Imap *)
     | GAMEOVER of int * stats
 
   open Bencode
@@ -379,93 +370,98 @@ module Game = struct
     | L [I x; I y] -> (x, y)
     | _ -> raise (Error "Invalid position.")
 
-  let encode_client = function
+  let encode_client_command = function
     | MOVE (pos, dir) -> L [S "MOVE"; encode_pos pos; encode_dir dir]
     | BOMB pos -> L [S "BOMB"; encode_pos pos]
-    | SYNC i -> L [S "SYNC"; I i]
 
-  let decode_client = function
+  let decode_client_command = function
     | L [S "MOVE"; pos; dir] -> MOVE (decode_pos pos, decode_dir dir)
     | L [S "BOMB"; pos] -> BOMB (decode_pos pos)
-    | L [S "SYNC"; I i] -> SYNC i
     | _ -> raise (Error "Invalid client")
 
+  let encode_client_raw = function
+    | RAW_COMMAND cmd -> encode_client_command cmd
+    | RAW_SYNC i -> L [S "SYNC"; I i]
+
+  let decode_client_raw = function
+    | L [S "SYNC"; I i] -> RAW_SYNC i
+    | cmd -> RAW_COMMAND (decode_client_command cmd)
+
+  let encode_client = function
+    | COMMAND (id, seq, rej, cmd) ->
+        D (map_of_list
+          [ ("Id", S id)
+          ; ("Sequence", I seq)
+          ; ("Reject", I rej)
+          ; ("Message", encode_client_command cmd)
+          ])
+    | SYNC (id, i) ->
+        D (map_of_list [ ("Id", S id); ("Message", L [S "SYNC"; I i]) ])
+
+  let encode_clients lst = L (List.map encode_client lst)
+
+  let decode_client = function
+    | D tbl -> begin
+      try
+        match gets [ "Id"; "Message" ] tbl with
+        | [S id; L [S "SYNC"; I i]] -> SYNC (id, i)
+        | [S id; cmd] ->
+            begin match gets ["Sequence"; "Reject"] tbl with
+            | [I sq; I rj] -> COMMAND (id, sq, rj, decode_client_command cmd)
+            | _ -> raise (Error "bad")
+            end
+        | _ -> raise (Error "worse")
+      with Not_found -> raise (Error "Not_found")
+    end
+    | _ -> raise (Error "bad client")
+
+  let decode_clients = function
+    | L lst -> List.map decode_client lst
+    | b -> [decode_client b]
+
   let encode_action = function
-    | CLIENT client -> encode_client client
+    | CLIENT client -> encode_client_raw client
     | NOP i -> L [S "NOP"; I i]
     | DEAD -> S "DEAD"
 
   let decode_action = function
     | L [S "NOP"; I i] -> NOP i
     | S "DEAD" -> DEAD
-    | cli -> CLIENT (decode_client cli)
+    | cli -> CLIENT (decode_client_raw cli)
 
   let encode_stats { winner } =
-    let tbl = Hashtbl.create 1 in
-    Hashtbl.add tbl "WINNER" (S winner);
-    D tbl
+    match winner with
+    | Some w -> D (Smap.add "WINNER" (S w) Smap.empty)
+    | None -> D Smap.empty
   
   let decode_stats = function
     | D tbl -> begin
-        try begin match Hashtbl.find tbl "WINNER" with
-          | S winner -> { winner }
-          | _ -> raise (Error "Winner not an identifier.")
-        end with Not_found -> raise (Error "bad winner")
+      try begin match Smap.find "WINNER" tbl with
+      | S winner -> { winner = Some winner }
+      | _ -> raise (Error "Winner not an identifier.")
+      end with Not_found -> { winner = None }
     end
     | _ -> raise (Error "bad stats")
 
   let encode_server = function
-    | TURN (i, tbl) -> let open Hashtbl in
-        let btbl = create (length tbl) in
-        iter (fun k v -> add btbl k (L (List.map encode_action v))) tbl;
+    | TURN (i, tbl) ->
+        let btbl = Smap.map (fun v -> L (List.map encode_action v)) tbl in
         L [S "TURN"; I i; D btbl]
     | GAMEOVER (i, stats) -> L [S "GAMEOVER"; I i; encode_stats stats]
 
+  let encode_servers lst = L (List.map encode_server lst)
+
   let decode_server = function
-    | L [S "TURN"; I i; D btbl] -> let open Hashtbl in
-        let tbl = create (length btbl) in
-        iter (fun k -> function
-          | L lst -> add tbl k (List.map decode_action lst)
-          | _ -> raise (Error "bad actions")) btbl;
-        TURN (i, tbl)
+    | L [S "TURN"; I i; D btbl] ->
+        TURN (i, Smap.map (function
+          | L lst -> List.map decode_action lst
+          | _ -> raise (Error "bad actions")) btbl)
     | L [S "GAMEOVER"; I i; stats] -> GAMEOVER (i, decode_stats stats)
     | _ -> raise (Error "bad server")
 
-  module Server = struct
-    type input = client
-    type output = server
-
-    let input_of_stream =
-      read_stream
-        (wrap1 decode_client)
-        (function
-          | Bencode.Format_error e ->
-              Lwt_log.error
-                ("Bencode format error while decoding messages from " ^
-                "Protocol.Game client: " ^ e)
-          | Error where ->
-              Lwt_log.error where
-          | exn -> fail exn)
-
-    let stream_of_output v = Bencode.to_stream (encode_server v)
-  end
-
-  module Client = struct
-    type input = server
-    type output = client
-
-    let input_of_stream =
-      read_stream
-        (wrap1 decode_server)
-        (function
-          | Bencode.Format_error e ->
-              Lwt_log.error
-                ("Bencode format error while decoding messages from " ^
-                "Protocol.Game server: " ^ e)
-          | Error where ->
-              Lwt_log.error where
-          | exn -> fail exn)
-
-    let stream_of_output v = Bencode.to_stream (encode_client v)
-  end
+  let decode_servers = function
+    | L lst ->
+        begin try [decode_server @$ L lst]
+        with Error _ -> List.map decode_server lst end
+    | b -> [decode_server b] (* always fail... *)
 end

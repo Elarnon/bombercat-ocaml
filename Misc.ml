@@ -1,5 +1,7 @@
 open Lwt
 
+module Smap = Map.Make(String)
+
 let (@$) f x = f x
 
 let merge ?(quit=false) streams =
@@ -40,3 +42,8 @@ let wrap_eintr f =
       f ()
     with Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
   in loop
+
+let map_of_list l =
+  List.fold_left (fun m (k, v) -> Smap.add k v m) Smap.empty l
+
+let gets lst map = List.map (fun k -> Smap.find k map) lst
