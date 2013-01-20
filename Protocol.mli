@@ -68,11 +68,9 @@ module Initialisation : sig
 
 end
 
-(*
-
 module Game : sig
   type dir =
-    | N | E | S | W
+    | UP | RIGHT | DOWN | LEFT
 
   type pos = int * int
 
@@ -81,19 +79,23 @@ module Game : sig
     | BOMB of pos
     | SYNC of int
 
-  type server_action =
-    | BROADCAST of client
+  type action =
+    | CLIENT of client
     | NOP of int
     | DEAD
 
-  type server = 
-    | TURN of int * (string * server_action) list
-    | GAMEOVER of int * string option
+  type stats =
+    { winner : string }
 
-  module Server : Network.UDP with
-    type input = client and type output = server
+  type server =
+    | TURN of int * (string, action list) Hashtbl.t
+    | GAMEOVER of int * stats
 
-  module Client : Network.UDP with
-    type input = server and type output = client
-end
-*)
+  module Server : Network.CHANNEL with
+    type input = client and
+    type output = server
+
+  module Client : Network.CHANNEL with
+    type input = server and
+    type output = client
+end 

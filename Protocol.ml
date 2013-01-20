@@ -334,3 +334,138 @@ module Initialisation = struct
   end
 
 end
+
+module Game = struct
+  type dir =
+    | UP | RIGHT | DOWN | LEFT
+
+  type pos = int * int
+
+  type client =
+    | MOVE of pos * dir
+    | BOMB of pos
+    | SYNC of int
+
+  type action =
+    | CLIENT of client
+    | NOP of int
+    | DEAD
+
+  type stats =
+    { winner : string }
+
+  type server =
+    | TURN of int * (string, action list) Hashtbl.t
+    | GAMEOVER of int * stats
+
+  open Bencode
+
+  let encode_dir = function
+    | UP -> S "UP"
+    | RIGHT -> S "RIGHT"
+    | DOWN -> S "DOWN"
+    | LEFT -> S "LEFT"
+
+  let decode_dir = function
+    | S "UP" -> UP
+    | S "RIGHT" -> RIGHT
+    | S "DOWN" -> DOWN
+    | S "LEFT" -> LEFT
+    | _ -> raise (Error "Invalid dir")
+
+  let encode_pos (x, y) = L [I x; I y]
+
+  let decode_pos = function
+    | L [I x; I y] -> (x, y)
+    | _ -> raise (Error "Invalid position.")
+
+  let encode_client = function
+    | MOVE (pos, dir) -> L [S "MOVE"; encode_pos pos; encode_dir dir]
+    | BOMB pos -> L [S "BOMB"; encode_pos pos]
+    | SYNC i -> L [S "SYNC"; I i]
+
+  let decode_client = function
+    | L [S "MOVE"; pos; dir] -> MOVE (decode_pos pos, decode_dir dir)
+    | L [S "BOMB"; pos] -> BOMB (decode_pos pos)
+    | L [S "SYNC"; I i] -> SYNC i
+    | _ -> raise (Error "Invalid client")
+
+  let encode_action = function
+    | CLIENT client -> encode_client client
+    | NOP i -> L [S "NOP"; I i]
+    | DEAD -> S "DEAD"
+
+  let decode_action = function
+    | L [S "NOP"; I i] -> NOP i
+    | S "DEAD" -> DEAD
+    | cli -> CLIENT (decode_client cli)
+
+  let encode_stats { winner } =
+    let tbl = Hashtbl.create 1 in
+    Hashtbl.add tbl "WINNER" (S winner);
+    D tbl
+  
+  let decode_stats = function
+    | D tbl -> begin
+        try begin match Hashtbl.find tbl "WINNER" with
+          | S winner -> { winner }
+          | _ -> raise (Error "Winner not an identifier.")
+        end with Not_found -> raise (Error "bad winner")
+    end
+    | _ -> raise (Error "bad stats")
+
+  let encode_server = function
+    | TURN (i, tbl) -> let open Hashtbl in
+        let btbl = create (length tbl) in
+        iter (fun k v -> add btbl k (L (List.map encode_action v))) tbl;
+        L [S "TURN"; I i; D btbl]
+    | GAMEOVER (i, stats) -> L [S "GAMEOVER"; I i; encode_stats stats]
+
+  let decode_server = function
+    | L [S "TURN"; I i; D btbl] -> let open Hashtbl in
+        let tbl = create (length btbl) in
+        iter (fun k -> function
+          | L lst -> add tbl k (List.map decode_action lst)
+          | _ -> raise (Error "bad actions")) btbl;
+        TURN (i, tbl)
+    | L [S "GAMEOVER"; I i; stats] -> GAMEOVER (i, decode_stats stats)
+    | _ -> raise (Error "bad server")
+
+  module Server = struct
+    type input = client
+    type output = server
+
+    let input_of_stream =
+      read_stream
+        (wrap1 decode_client)
+        (function
+          | Bencode.Format_error e ->
+              Lwt_log.error
+                ("Bencode format error while decoding messages from " ^
+                "Protocol.Game client: " ^ e)
+          | Error where ->
+              Lwt_log.error where
+          | exn -> fail exn)
+
+    let stream_of_output v = Bencode.to_stream (encode_server v)
+  end
+
+  module Client = struct
+    type input = server
+    type output = client
+
+    let input_of_stream =
+      read_stream
+        (wrap1 decode_server)
+        (function
+          | Bencode.Format_error e ->
+              Lwt_log.error
+                ("Bencode format error while decoding messages from " ^
+                "Protocol.Game server: " ^ e)
+          | Error where ->
+              Lwt_log.error where
+          | exn -> fail exn)
+
+    let stream_of_output v = Bencode.to_stream (encode_client v)
+  end
+end
