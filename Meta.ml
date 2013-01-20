@@ -68,7 +68,8 @@ module Server = struct
               { game_id = id
               ; game_addr = addr
               ; game_name = name
-              ; game_nb_players = nb_players
+              ; game_nb_players = 0
+              ; game_max_players = nb_players
               } in
             Games.add servers client id game >>
             return (Some [ADDED id])
@@ -104,7 +105,7 @@ module Client = struct
     Connection.recv srv >>= function
       | Some (ADDED game_id) -> return @$ Some
         { game_id; game_addr = addr; game_name = name
-        ; game_nb_players = nb_players }
+        ; game_nb_players = 0 ; game_max_players = nb_players }
       | Some _ -> assert false (* TODO *)
       | None -> return_none
 

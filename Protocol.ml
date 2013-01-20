@@ -29,6 +29,7 @@ module Meta = struct
     ; game_addr : Network.addr
     ; game_name : string
     ; game_nb_players : int
+    ; game_max_players : int
     }
 
   type server =
@@ -68,7 +69,7 @@ module Meta = struct
             ^ "from a Protocol.Meta client."))
         else return (ADD (addr, name, nb_players))
     | L ( S "UPDATE" :: I game_id :: I nb_players :: _ ) ->
-        if nb_players < 1
+        if nb_players < 0
         then
           fail (Error
             ("Unexpected negative number of players while reading ADD message "
@@ -89,6 +90,7 @@ module Meta = struct
     Hashtbl.add tbl "Port" (I port);
     Hashtbl.add tbl "Name" (S g.game_name);
     Hashtbl.add tbl "Players" (I g.game_nb_players);
+    Hashtbl.add tbl "MaxPlayers" (I g.game_max_players);
     D tbl
 
   let bdecode_game = let open Bencode in function
@@ -98,15 +100,19 @@ module Meta = struct
         and bip = Hashtbl.find tbl "Ip"
         and bport = Hashtbl.find tbl "Port"
         and bname = Hashtbl.find tbl "Name"
-        and bnb_players = Hashtbl.find tbl "Players" in
-        match (bid, bip, bport, bname, bnb_players) with
-        | I id, S ip, I port, S name, I players when players > 0 ->
-            mk_addr ip ~port >>= fun game_addr ->
-            return { game_id = id
-            ; game_addr
-            ; game_name = name
-            ; game_nb_players = players
-            }
+        and bnb_players = Hashtbl.find tbl "Players"
+        and bmax = Hashtbl.find tbl "MaxPlayers" in
+        match (bid, bip, bport, bname, bnb_players, bmax) with
+        | I id, S ip, I port, S name, I players, I max_players when
+          players > 0 && max_players >= players ->
+            lwt game_addr = mk_addr ip ~port in
+            return
+              { game_id = id
+              ; game_addr
+              ; game_name = name
+              ; game_nb_players = players
+              ; game_max_players = max_players
+              }
         | _ ->
             fail (Error "Ill-typed game parameters dictionary.")
       with Not_found ->

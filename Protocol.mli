@@ -6,6 +6,7 @@ module Meta : sig
     ; game_addr : Network.addr
     ; game_name : string
     ; game_nb_players : int
+    ; game_max_players : int
     }
 
   type client =

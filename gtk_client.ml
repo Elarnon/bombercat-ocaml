@@ -4,7 +4,7 @@ open Gobject.Data
 let cols        = new GTree.column_list
 let col_name    = cols#add string
 let col_ip      = cols#add string
-let col_players = cols#add int
+let col_players = cols#add string
 
 let model = GTree.list_store cols
 
@@ -13,7 +13,8 @@ let update =
   fun games ->
     let open Protocol.Meta in
     List.iter
-      (fun { game_name ; game_addr ; game_nb_players ; game_id ; _ } ->
+      (fun { game_name; game_addr; game_nb_players; game_max_players; game_id
+           ; _ } ->
         let row =
           try
             let (row, seen) = Hashtbl.find tbl game_id in
@@ -23,7 +24,10 @@ let update =
             Hashtbl.add tbl game_id (row, ref true); row
         in let (ip, port) = Network.raw_addr game_addr in
         model # set ~row ~column:col_name game_name;
-        model # set ~row ~column:col_players game_nb_players;
+        let players =
+          string_of_int game_nb_players ^ "/" ^ string_of_int game_max_players
+        in
+        model # set ~row ~column:col_players players;
         model # set ~row ~column:col_ip (ip ^ ":" ^ string_of_int port))
       games;
     let to_remove = ref [] in
@@ -49,7 +53,7 @@ let create_view ~model ~packing () =
   ignore (view#append_column col);
 
   (* Third column : number of places available *)
-  let col = GTree.view_column ~title:"Spots availables"
+  let col = GTree.view_column ~title:"Players"
       ~renderer:(GTree.cell_renderer_text [], ["text", col_players]) () in
   ignore (view#append_column col);
 
