@@ -154,62 +154,36 @@ module TCP = struct
 end
 
 module UDP = struct
+  type t = U.file_descr
 
-  module type S = sig
-    type input
-    type output
-    type t
+  let create ?(addr=U.ADDR_INET (Unix.inet_addr_any, 0)) () =
+    let domain = Unix.domain_of_sockaddr addr in
+    let sock = U.socket domain Unix.SOCK_DGRAM 0 in
+    U.bind sock addr;
+    sock
 
-    val create : ?addr:addr -> unit -> t
+  let close = U.close
 
-    val sendto : t -> output -> addr -> bool Lwt.t
-
-    val recvfrom : t -> (input * addr) option Lwt.t
-  end
-
-  module Make(Chan : CHANNEL) = struct
-
-    type input = Chan.input
-    
-    type output = Chan.output
-
-    type t = U.file_descr
-
-    let create ?(addr=U.ADDR_INET (Unix.inet_addr_any, 0)) () =
-      let domain = Unix.domain_of_sockaddr addr in
-      U.socket domain Unix.SOCK_DGRAM 0
-
-    let close = U.close
-
-    let sendto fdescr out addr =
-      lwt str = Lwt_stream.to_string (Chan.stream_of_output out) in
-      let len = String.length str in
-      if len > 65536 then return false else begin
-        Lwt.async (wrap_eintr (fun () ->
-          match U.state fdescr with
-          | U.Opened -> U.sendto fdescr str 0 len [] addr >> return ()
-          | U.Aborted _ -> U.close fdescr (* TODO ? *)
-          | U.Closed -> return ()));
-        return true
-      end
-
-    let rec recvfrom fdescr =
-      (* We have to make a new buffer each time because there are potentially
-       * multiple instances of [recvfrom] running in parallel *)
-      let buffer = String.make 65536 ' ' in
-      wrap_eintr (fun () ->
+  let sendto fdescr str addr =
+    let len = String.length str in
+    if len > 65535 then false else begin
+      Lwt.async (wrap_eintr (fun () ->
         match U.state fdescr with
-        | U.Opened ->  U.recvfrom fdescr buffer 0 65536 [] >|= fun x -> Some x
-        | U.Aborted _ -> U.close fdescr >> return None (* TODO ? *)
-        | U.Closed -> return None) () >>= function
-          | None -> return None
-          | Some (len, addr) -> begin
-              let stream = Lwt_stream.of_string (String.sub buffer 0 len) in
-              Chan.input_of_stream stream >>= function
-                | None -> recvfrom fdescr (* Ignore invalid packets *)
-                | Some input -> return @$ Some (input, addr)
-          end
+        | U.Opened -> U.sendto fdescr str 0 len [] addr >> return ()
+        | U.Aborted _ -> U.close fdescr (* TODO ? *)
+        | U.Closed -> return ()));
+        true
+    end
 
-  end
-
+  let rec recvfrom fdescr =
+    (* We have to make a new buffer each time because there are potentially
+     * multiple instances of [recvfrom] running in parallel *)
+    let buffer = String.make 65536 ' ' in
+    wrap_eintr (fun () ->
+      match U.state fdescr with
+      | U.Opened ->  U.recvfrom fdescr buffer 0 65535 [] >|= fun x -> Some x
+      | U.Aborted _ -> U.close fdescr >> return None (* TODO ? *)
+      | U.Closed -> return None) () >|= function
+        | None -> None
+        | Some (len, addr) -> Some (String.sub buffer 0 len, addr)
 end

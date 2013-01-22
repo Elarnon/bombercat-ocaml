@@ -2,6 +2,7 @@ open Lwt
 open Network
 open Misc
 open Bencode
+open Data
 
 exception Error of string
 
@@ -185,6 +186,7 @@ module Initialisation = struct
     D (map_of_list
       [ ("GameTime", I p.p_game_time)
       ; ("BombExplosionTime", I p.p_bomb_time)
+      ; ("BombExplosionDistance", I p.p_bomb_dist)
       ; ("MapWidth", I p.p_map_width)
       ; ("MapHeight", I p.p_map_height)
       ; ("TurnTime", I p.p_turn_time)
@@ -320,25 +322,16 @@ module Initialisation = struct
 end
 
 module Game = struct
-  type dir =
-    | UP | RIGHT | DOWN | LEFT
-
-  type pos = int * int
-
   type client_command =
     | MOVE of pos * dir
     | BOMB of pos
-
-  type client_raw =
-    | RAW_COMMAND of client_command
-    | RAW_SYNC of int
 
   type client =
     | COMMAND of string * int * int * client_command
     | SYNC of string * int
 
   type action =
-    | CLIENT of client_raw
+    | CLIENT of client_command
     | NOP of int
     | DEAD
 
@@ -352,16 +345,16 @@ module Game = struct
   open Bencode
 
   let encode_dir = function
-    | UP -> S "UP"
-    | RIGHT -> S "RIGHT"
-    | DOWN -> S "DOWN"
-    | LEFT -> S "LEFT"
+    | Up -> S "UP"
+    | Right -> S "RIGHT"
+    | Down -> S "DOWN"
+    | Left -> S "LEFT"
 
   let decode_dir = function
-    | S "UP" -> UP
-    | S "RIGHT" -> RIGHT
-    | S "DOWN" -> DOWN
-    | S "LEFT" -> LEFT
+    | S "UP" -> Up
+    | S "RIGHT" -> Right
+    | S "DOWN" -> Down
+    | S "LEFT" -> Left
     | _ -> raise (Error "Invalid dir")
 
   let encode_pos (x, y) = L [I x; I y]
@@ -379,14 +372,6 @@ module Game = struct
     | L [S "BOMB"; pos] -> BOMB (decode_pos pos)
     | _ -> raise (Error "Invalid client")
 
-  let encode_client_raw = function
-    | RAW_COMMAND cmd -> encode_client_command cmd
-    | RAW_SYNC i -> L [S "SYNC"; I i]
-
-  let decode_client_raw = function
-    | L [S "SYNC"; I i] -> RAW_SYNC i
-    | cmd -> RAW_COMMAND (decode_client_command cmd)
-
   let encode_client = function
     | COMMAND (id, seq, rej, cmd) ->
         D (map_of_list
@@ -399,6 +384,12 @@ module Game = struct
         D (map_of_list [ ("Id", S id); ("Message", L [S "SYNC"; I i]) ])
 
   let encode_clients lst = L (List.map encode_client lst)
+
+  let most_clients_to_string lst =
+    most_to_string 65535 (List.map encode_client lst)
+
+  let all_clients_to_strings lst =
+    all_to_strings 65535 (List.map encode_client lst)
 
   let decode_client = function
     | D tbl -> begin
@@ -420,14 +411,14 @@ module Game = struct
     | b -> [decode_client b]
 
   let encode_action = function
-    | CLIENT client -> encode_client_raw client
+    | CLIENT client -> encode_client_command client
     | NOP i -> L [S "NOP"; I i]
     | DEAD -> S "DEAD"
 
   let decode_action = function
     | L [S "NOP"; I i] -> NOP i
     | S "DEAD" -> DEAD
-    | cli -> CLIENT (decode_client_raw cli)
+    | cli -> CLIENT (decode_client_command cli)
 
   let encode_stats { winner } =
     match winner with
@@ -443,13 +434,26 @@ module Game = struct
     end
     | _ -> raise (Error "bad stats")
 
-  let encode_server = function
+  let encode_server ?nops = function
     | TURN (i, tbl) ->
-        let btbl = Smap.map (fun v -> L (List.map encode_action v)) tbl in
+        let btbl = Smap.mapi
+            (fun id v ->
+              let l =
+                if nops = Some id then v else
+                  List.filter (function | NOP _ -> false | _ -> true) v in
+              L (List.map encode_action l)
+            ) tbl in
         L [S "TURN"; I i; D btbl]
     | GAMEOVER (i, stats) -> L [S "GAMEOVER"; I i; encode_stats stats]
 
-  let encode_servers lst = L (List.map encode_server lst)
+  let encode_servers ?nops lst =
+    L (List.map (encode_server ?nops) lst)
+
+  let most_servers_to_string ?nops lst =
+    most_to_string 65535 (List.map (encode_server ?nops) lst)
+
+  let all_servers_to_strings ?nops lst =
+    all_to_strings 65535 (List.map (encode_server ?nops) lst)
 
   let decode_server = function
     | L [S "TURN"; I i; D btbl] ->
@@ -464,4 +468,22 @@ module Game = struct
         begin try [decode_server @$ L lst]
         with Error _ -> List.map decode_server lst end
     | b -> [decode_server b] (* always fail... *)
+
+  let string_to_servers s =
+    try_lwt
+      Bencode.of_string s >|= function
+        | None -> []
+        | Some b -> decode_servers b
+    with
+    | Bencode.Format_error _ -> return []
+    | Error _ -> return []
+
+  let string_to_clients s =
+    try_lwt
+      Bencode.of_string s >|= function
+        | None -> []
+        | Some b -> decode_clients b
+    with
+    | Bencode.Format_error _ -> return []
+    | Error _ -> return []
 end

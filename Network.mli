@@ -60,19 +60,11 @@ module TCP : sig
 end
 
 module UDP : sig 
-  module type S = sig
-    type input
-    type output
-    type t
+  type t
 
-    val create : ?addr:addr -> unit -> t
+  val create : ?addr:addr -> unit -> t
 
-    val sendto : t -> output -> addr -> bool Lwt.t
+  val sendto : t -> string -> addr -> bool
 
-    val recvfrom : t -> (input * addr) option Lwt.t
-  end
-
-  module Make(Chan : CHANNEL) : S with
-    type input = Chan.input and
-    type output = Chan.output
+  val recvfrom : t -> (string * addr) option Lwt.t
 end

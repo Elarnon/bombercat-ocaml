@@ -2,11 +2,19 @@ open Protocol.Initialisation
 open Misc
 open Lwt
 
+type game =
+  { g_map : Data.map
+  ; g_params : Protocol.Initialisation.params
+  ; g_players : (string, string * char) Hashtbl.t
+  ; g_start : Unix.tm * int
+  ; g_name : string
+  }
+
 module Server = struct
 
   module Connection = Network.TCP.Make(Protocol.Initialisation.Server)
 
-  type 'a state =
+  type state =
     (* Identifier sequence to make them unique *)
     { mutable next_id : int
     (* Set of available characters on the map *)
@@ -26,7 +34,7 @@ module Server = struct
 
   let mk_state map params meta game =
     let available = Hashtbl.create 17 in
-    Hashtbl.iter (fun k _ -> Hashtbl.add available k ()) map.Data.players;
+    Hashtbl.iter (fun k _ -> Hashtbl.add available k ()) (Data.players map);
     { next_id = 0
     ; available
     ; map
@@ -40,7 +48,7 @@ module Server = struct
 
   let nb_players { players; _ } = Hashtbl.length players
 
-  let max_players { map ; _ } = Hashtbl.length map.Data.players
+  let max_players { map ; _ } = Hashtbl.length (Data.players map)
 
   (* Treat message as authentified user [cid] in state [state] *)
   let treat_message cid state = function
@@ -185,12 +193,18 @@ module Server = struct
       (* Ready to start ! *)
       Lwt_io.shutdown_server server;
       Meta.Client.delete state.meta ~id:state.game.Protocol.Meta.game_id;
+      Meta.Client.Connection.close state.meta;
       let (nanof, datef) = modf (Unix.gettimeofday ()) in
       let date = Unix.gmtime datef in
       let nano = int_of_float (nanof *. 10000.) in
       state.starting <- Some (date, nano);
       Lwt_condition.broadcast state.updated ();
-      return (date, nano)
+      return { g_map = state.map
+             ; g_params = state.params
+             ; g_players = state.players
+             ; g_start = (date, nano)
+             ; g_name = state.game.Protocol.Meta.game_name
+             }
     end else
       handle_server server state
 
@@ -200,16 +214,16 @@ module Server = struct
     Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
     let map = Data.map_of_string s in
     Meta.Client.add meta ~addr ~name:"CATSERV"
-      ~nb_players:(Hashtbl.length map.Data.players) >>= function
+      ~nb_players:(Hashtbl.length (Data.players map)) >>= function
         | None -> assert false (* TODO *)
         | Some game ->
             let params =
               { p_game_time = max_int - 1
               ; p_bomb_time = 4
               ; p_bomb_dist = 2
-              ; p_map_width = map.Data.width
-              ; p_map_height = map.Data.height
-              ; p_turn_time = 250
+              ; p_map_width = Data.width map
+              ; p_map_height = Data.height map
+              ; p_turn_time = 2000
               ; p_start_delay = 3000
               ; p_version = 1
               } in

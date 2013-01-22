@@ -1,8 +1,16 @@
+type game =
+  { g_map : Data.map
+  ; g_params : Protocol.Initialisation.params
+  ; g_players : (string, string * char) Hashtbl.t
+  ; g_start : Unix.tm * int
+  ; g_name : string
+  }
+
 module Server : sig
 
   (* type server *)
 
-  val create : Network.addr -> Meta.Client.Connection.t -> (Unix.tm * int) Lwt.t
+  val create : Network.addr -> Meta.Client.Connection.t -> game Lwt.t
 
   (* val shutdown : server -> unit *)
 

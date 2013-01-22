@@ -135,20 +135,39 @@ let of_stream stream =
       fail (Format_error
         "Unexpected end of stream while reading a bencoded value.")
 
-let rec to_stream = function
-  | S s -> S.of_string (string_of_int (String.length s) ^ ":" ^ s)
-  | I i -> S.of_string ("i" ^ string_of_int i ^ "e")
+let rec to_string = function
+  | S s -> string_of_int (String.length s) ^ ":" ^ s
+  | I i -> "i" ^ string_of_int i ^ "e"
   | L l -> (* [< "l"; concatMap to_stream l; "e" >] *)
-      let contents = S.concat (S.map to_stream (S.of_list l)) in
-      S.append (S.of_string "l") (S.append contents (S.of_string "e"))
+      let contents = String.concat "" (List.map to_string l) in
+      "l" ^ contents ^ "e"
   | D m ->
       let beginning = Smap.fold (fun k v s ->
-        S.append s (S.append (to_stream (S k)) (to_stream v)))
-        m (S.of_string "d") in
-      S.append beginning (S.of_string "e")
+        s ^ to_string (S k) ^ to_string v) m "d" in
+      beginning ^ "e"
 
 let of_string s =
   of_stream (S.of_string s)
 
-let to_string v =
-  S.to_string (to_stream v)
+let to_stream v =
+  S.of_string (to_string v)
+
+let most_to_string len vs =
+  let rec travel str n = function
+    | [] -> "l" ^ str ^ "e", n
+    | elt :: rest ->
+        let bstr = to_string elt in
+        let nstr = str ^ bstr in
+        if String.length nstr > len - 2 then
+          ("l" ^ str ^ "e", n)
+        else
+          travel nstr (n + 1) rest
+  in travel "" 0 vs
+
+let all_to_strings len lst =
+  let rec trec acc = function
+    | [] -> List.rev acc
+    | lst ->
+        let packet, nb = most_to_string len lst in
+        trec (packet :: acc) (discard nb lst)
+  in trec [] lst

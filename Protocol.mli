@@ -69,25 +69,16 @@ module Initialisation : sig
 end
 
 module Game : sig
-  type dir =
-    | UP | RIGHT | DOWN | LEFT
-
-  type pos = int * int
-
   type client_command =
-    | MOVE of pos * dir
-    | BOMB of pos
-
-  type client_raw =
-    | RAW_COMMAND of client_command
-    | RAW_SYNC of int
+    | MOVE of Data.pos * Data.dir
+    | BOMB of Data.pos
 
   type client =
     | COMMAND of string * int * int * client_command
     | SYNC of string * int
 
   type action =
-    | CLIENT of client_raw
+    | CLIENT of client_command
     | NOP of int
     | DEAD
 
@@ -97,4 +88,16 @@ module Game : sig
   type server =
     | TURN of int * action list Map.Make(String).t
     | GAMEOVER of int * stats
+
+  val most_clients_to_string : client list -> string * int
+
+  val all_clients_to_strings : client list -> string list
+
+  val most_servers_to_string : ?nops:string -> server list -> string * int
+
+  val all_servers_to_strings : ?nops:string -> server list -> string list
+
+  val string_to_clients : string -> client list Lwt.t
+
+  val string_to_servers : string -> server list Lwt.t
 end 

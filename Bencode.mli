@@ -30,4 +30,8 @@ val to_stream : t -> char Lwt_stream.t
 val of_string : string -> t option Lwt.t
 
 (** Converts a bencodable value to a string *)
-val to_string : t -> string Lwt.t
+val to_string : t -> string
+
+val most_to_string : int -> t list -> string * int
+
+val all_to_strings : int -> t list -> string list
