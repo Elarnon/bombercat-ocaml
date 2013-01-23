@@ -97,7 +97,7 @@ module Game : sig
 
   val all_servers_to_strings : ?nops:string -> server list -> string list
 
-  val string_to_clients : string -> client list Lwt.t
+  val string_to_clients : string -> client list
 
-  val string_to_servers : string -> server list Lwt.t
+  val string_to_servers : string -> server list
 end 

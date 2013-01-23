@@ -72,3 +72,10 @@ let dump_stack stack =
     lst := Stack.pop stack :: !lst
   done;
   !lst
+
+let list_iteri f l =
+  let rec iteri n = function
+    | [] -> ()
+    | h::t -> f n h; iteri (n + 1) t
+  in iteri 0 l
+

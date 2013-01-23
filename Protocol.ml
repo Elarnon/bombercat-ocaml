@@ -470,20 +470,19 @@ module Game = struct
     | b -> [decode_server b] (* always fail... *)
 
   let string_to_servers s =
-    try_lwt
-      Bencode.of_string s >|= function
+    try
+      match Bencode.of_string s with
         | None -> []
         | Some b -> decode_servers b
     with
-    | Bencode.Format_error _ -> return []
-    | Error _ -> return []
+    | Bencode.Format_error _ -> []
+    | Error _ -> []
 
   let string_to_clients s =
-    try_lwt
-      Bencode.of_string s >|= function
+    try match Bencode.of_string s with
         | None -> []
         | Some b -> decode_clients b
     with
-    | Bencode.Format_error _ -> return []
-    | Error _ -> return []
+    | Bencode.Format_error _ -> []
+    | Error _ -> []
 end
