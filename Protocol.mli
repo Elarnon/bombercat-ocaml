@@ -1,5 +1,3 @@
-exception Error of string
-
 module Meta : sig
   type game =
     { game_id : int

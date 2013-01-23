@@ -38,8 +38,7 @@ let merge ?(quit=false) streams =
 
 let wrap_eintr f =
   let rec loop () =
-    try_lwt
-      f ()
+    try_lwt f ()
     with Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
   in loop
 
