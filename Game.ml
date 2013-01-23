@@ -24,6 +24,15 @@ type t =
   ; socket : Network.UDP.t
   }
 
+type cli =
+  { cli_params : params
+  ; cli_map : Data.map
+  ; cli_socket : Network.UDP.t
+  ; cli_serv : Network.addr
+  ; mutable cli_reject : int
+  ; mutable cli_seq : int
+  ; mutable cli.
+
 (* Turn checking *)
 let turn_is_past { turn; _ } t = t >= 0 && t < turn
 
@@ -52,6 +61,28 @@ let validate_author pi id from =
   | Some author when author = from -> true
   | Some _ -> false
   | None -> pi.pi_author <- Some from; true
+
+let reorder data nb stuff =
+  if Hashtbl.length reord < reord_window then begin
+    if nb > last_turn + reord_window then begin
+      (* We are out of sync! *)
+      send_sync_message ()
+    end else begin (* Normally receiving *)
+      Hashtbl.replace reord nb stuff;
+      begin try while Queue.length queue < max_stack do
+        let turn = hashtbl_take reord (last_turn + 1) in
+        Queue.add turn queue;
+        last_turn := !last_turn + 1
+      done with Not_found -> () end;
+    end;
+  end else (* Wow, too fast *)
+    ()
+
+let treat_server data = function
+  | TURN (nb, smap) ->
+      reorder data nb (`Turn smap)
+  | GAMEOVER (nb, stats) ->
+      reorder data nb (`Gameover stats)
 
 let treat_message ({ map; players; _ } as st) from = function
   | COMMAND (id, seq, rej, msg) ->
