@@ -53,3 +53,5 @@ let peek t = qwrap1 Queue.peek t
 let take t = qwrap1 Queue.take t
 
 let junk t = qwrap1 queue_junk t
+
+let last_id { last_queued; _ } = last_queued

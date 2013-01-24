@@ -19,11 +19,21 @@ type map =
   ; bombs : (int * int) Lwt_sequence.t
   }
 
+let map_choose { players; _ } =
+  let module X = struct exception Found of char end in
+  try Hashtbl.iter (fun id -> raise (X.Found id)) players; None
+  with X.Found id -> Some id
+
+let map_nb_players map = Hashtbl.length map.players
+
 let players { players ; _ } = players
 
 let width { width; _ } = width
 
 let height { height; _ } = height
+
+let iter_players f { players; _ } =
+  Hashtbl.iter f players
 
 let map_get map (x, y) =
   fst map.content.(x).(y)
@@ -57,6 +67,8 @@ let pos map player =
   try
     Some (Hashtbl.find map.players player)
   with Not_found -> None
+
+let map_pos m p = Hashtbl.find m.players p
 
 let is_pos_valid { width; height; _ } (x, y) =
   x >= 0 && y >= 0 && x < width && y < height
@@ -131,7 +143,7 @@ let blast ?(killed=[]) map pos dist =
       explode map pos dist Down killed3
     end else killed
   and explode map pos dist dir killed =
-    if is_pos_valid map pos then
+    if dist > 0 && is_pos_valid map pos then
       match map_get map pos with
       | Empty -> begin
         let killed' = killall map (pos ++> dir) killed in
@@ -141,6 +153,7 @@ let blast ?(killed=[]) map pos dist =
       | Destructible -> map_set map pos Empty; killed
       | Bomb (_, dist', node) -> begin
         Lwt_sequence.remove node;
+        map_set map pos Empty;
         let killed' = blast_impl map pos dist' killed in
         explode map (pos ++> dir) (dist - 1) dir killed'
       end
@@ -202,7 +215,9 @@ let map_of_string s =
   List.iter (fun (x, y, id) ->
     if Hashtbl.mem map.players id
     then raise InvalidMap
-    else Hashtbl.add map.players id (x, y)) !players;
+    else begin
+      Hashtbl.add map.players id (x, y); map_add_player map (x, y) id
+    end) !players;
   map
 
 let string_of_map { width; height; content; players } =
@@ -251,19 +266,25 @@ let draw { content; players; _ } ui matrix =
   Hashtbl.iter (fun c (x, y) ->
     Draw.draw_char ctx y x (UChar.of_char c)) players
 
-let display map =
+let display map callback update =
   let open LTerm_key in
   let open LTerm_event in
   let rec loop ui =
     LTerm_ui.wait ui >>= function
       | Key { code = Escape } ->
           return ()
-      | _ev ->
+      | ev ->
+          callback ev;
           LTerm_ui.draw ui;
           loop ui
+  in let rec redraw ui =
+    Lwt_condition.wait update >>= fun () ->
+      LTerm_ui.draw ui;
+      redraw ui
   in lwt term = Lazy.force LTerm.stdout in
   lwt ui = LTerm_ui.create term (draw map) in
   try_lwt
+    Lwt.async (fun () -> redraw ui);
     loop ui
   finally
     LTerm_ui.quit ui

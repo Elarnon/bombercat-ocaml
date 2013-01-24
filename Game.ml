@@ -71,13 +71,20 @@ module Server = struct
         with Not_found -> () end
     | SYNC (id, turn) ->
         begin try
+          Lwt.async (fun () -> Lwt_log.debug ("SYNC received (" ^ id ^ ")"));
+          Lwt.async (fun () ->
+            let s = ref "" in
+            Hashtbl.iter (fun k _ -> s := !s ^ ", " ^ k) players;
+            Lwt_log.debug ("Valid players: " ^ !s));
           let pi = Hashtbl.find players id in
           if turn_is_past st turn && is_player st id && validate_author pi id from
-          then
+          then begin
+            Lwt.async (fun () -> Lwt_log.debug "SYNC treated");
             let plogs = discard turn @$ st.logs in
             let strings = all_servers_to_strings ~nops:id plogs in
             List.iter (fun str ->
               ignore (Network.UDP.sendto st.socket str from)) strings;
+          end
         with Not_found -> () end
 
   let rec treat_input game =
@@ -89,13 +96,12 @@ module Server = struct
           treat_input game
 
   let run_turn st =
-    let nb_players = Hashtbl.length (Data.players st.map) in
+    let nb_players = Data.map_nb_players st.map in
     if not st.ended && nb_players <= 1 then begin
-      let module X = struct exception Found of char end in
       st.ended <- true;
-      let winner =
-        try Hashtbl.iter (fun id -> raise (X.Found id)) (Data.players st.map); None
-        with X.Found id -> Some (id_of_map st id)
+      let winner = match Data.map_choose st.map with
+        | Some id -> Some (id_of_map st id)
+        | None -> None
       in GAMEOVER (st.turn, { winner })
     end else
       let tbl = Hashtbl.create 17 in
@@ -187,6 +193,127 @@ module Server = struct
       } in
     let ttime = float_of_int server.params.p_turn_time /. 1000. in
     Lwt.async (fun () -> treat_input server);
-    Lwt.async (fun () -> Data.display server.map);
+    (* Lwt.async (fun () -> Data.display server.map); *)
     Lwt_unix.sleep ttime >> loop server
+end
+
+module Client = struct
+
+  type t =
+    { params : Protocol.Initialisation.params
+    ; map : Data.map
+    ; players : (string, (string * char)) Hashtbl.t
+    ; ident : string
+    ; pseudo : string
+    ; map_id : char
+    ; mutable reject : int
+    ; mutable sequence : int
+    ; socket : Network.UDP.t
+    ; server : Network.addr
+    ; turns : Protocol.Game.server R.t
+    ; mutable oos : bool
+    ; redraw : unit Lwt_condition.t
+    }
+
+  let treat_message t turn =
+    let id = match turn with | TURN (id, _) | GAMEOVER (id, _) -> id in
+    t.oos <- not (R.add t.turns id turn)
+
+  let rec treat_input t =
+    try_lwt
+      let tout = float_of_int (t.params.p_turn_time) /. 1000. *. 4. in
+      Lwt_unix.with_timeout tout (fun () -> Network.UDP.recvfrom t.socket)
+      >>= function
+        | None -> return ()
+        | Some (str, addr) when addr = t.server ->
+            let servers = string_to_servers str in
+            List.iter (treat_message t) servers;
+            treat_input t
+        | _ -> treat_input t
+    with Lwt_unix.Timeout -> t.oos <- true; treat_input t
+
+  let rec send_syncs t =
+    let tout = float_of_int (t.params.p_turn_time) /. 1000. *. 4.0 in
+    begin if t.oos then
+      let strs = all_clients_to_strings [ SYNC (t.ident, R.last_id t.turns) ] in
+      List.iter (fun str ->
+        ignore (Network.UDP.sendto t.socket str t.server)) strs end;
+    Lwt_unix.sleep tout >>
+    send_syncs t
+
+  let treat_event t ev =
+    let open LTerm_event in
+    let open LTerm_key in
+    let pos = Data.map_pos t.map t.map_id in
+    let mk v =
+      let res = COMMAND (t.ident, t.sequence, t.reject, v) in
+      t.sequence <- t.sequence + 1;
+      res in
+    match  ev with
+    | Key { code = Left } ->
+        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Left)) ] in
+        List.iter (fun str ->
+          ignore (Network.UDP.sendto t.socket str t.server)) strs
+    | Key { code = Up } ->
+        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Up)) ] in
+        List.iter (fun str ->
+          ignore (Network.UDP.sendto t.socket str t.server)) strs
+    | Key { code = Down } ->
+        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Down)) ] in
+        List.iter (fun str ->
+          ignore (Network.UDP.sendto t.socket str t.server)) strs
+    | Key { code = Right } ->
+        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Right)) ] in
+        List.iter (fun str ->
+          ignore (Network.UDP.sendto t.socket str t.server)) strs
+    | Key { code = Char c } when c = CamomileLibrary.UChar.of_char 'b' ->
+        let strs = all_clients_to_strings [ mk (BOMB pos) ] in
+        List.iter (fun str ->
+          ignore (Network.UDP.sendto t.socket str t.server)) strs
+    | _ -> ()
+
+  let rec update_map t =
+    let tout = float_of_int t.params.p_turn_time /. 1000. *. 0.5 in
+    Lwt_unix.sleep tout >>= fun () ->
+    begin try while true do
+      match R.take t.turns with
+      | TURN (_, actions) ->
+          Smap.iter (fun ident actions ->
+            let map_id = snd @$ Hashtbl.find t.players ident in
+            List.iter (function
+              | CLIENT (MOVE (pos, dir)) ->
+                  ignore (Data.try_move t.map map_id pos dir)
+              | CLIENT (BOMB pos) ->
+                  let btime = t.params.p_bomb_time
+                  and bdist = t.params.p_bomb_dist in
+                  ignore (Data.try_bomb t.map map_id pos btime bdist)
+              | NOP _ -> t.sequence <- 0; t.reject <- t.reject + 1
+              | DEAD -> ()) actions) actions;
+          ignore (Data.decrease_timers t.map);
+          Lwt_condition.broadcast t.redraw ()
+      | GAMEOVER (_, stats) -> () (* TODO *)
+    done; return () with R.Empty -> update_map t end
+
+  let main addr map params players ident =
+    let open Initialisation in
+    let t =
+      { params
+      ; map
+      ; players
+      ; ident
+      ; pseudo = fst @$ Hashtbl.find players ident
+      ; map_id = snd @$ Hashtbl.find players ident
+      ; reject = 0
+      ; sequence = 0
+      ; socket = Network.UDP.create ()
+      ; server = addr
+      ; turns = R.create 17
+      ; oos = false
+      ; redraw = Lwt_condition.create ()
+      } in
+    Lwt.async (fun () -> Data.display t.map (treat_event t) t.redraw);
+    Lwt.async (fun () -> update_map t);
+    Lwt.async (fun () -> send_syncs t);
+    treat_input t
+
 end

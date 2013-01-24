@@ -1,4 +1,4 @@
-<*.ml{,i}> or <{server,gtk_client}.{native,d.byte}>: package(lwt.unix), package(lwt.syntax),  syntax(camlp4of), package(lambda-term)
+<*.ml{,i}> or <{server,{gtk,cli}_client}.{native,d.byte}>: package(lwt.unix), package(lwt.syntax),  syntax(camlp4of), package(lambda-term)
 
 <{gtk_client}.{ml,native,d.byte}>: package(lablgtk2), package(lwt.glib)
 

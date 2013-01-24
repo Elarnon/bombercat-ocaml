@@ -34,7 +34,7 @@ module Server = struct
 
   let mk_state map params meta game =
     let available = Hashtbl.create 17 in
-    Hashtbl.iter (fun k _ -> Hashtbl.add available k ()) (Data.players map);
+    Data.iter_players (fun k _ -> Hashtbl.add available k ()) map;
     { next_id = 0
     ; available
     ; map
@@ -48,7 +48,7 @@ module Server = struct
 
   let nb_players { players; _ } = Hashtbl.length players
 
-  let max_players { map ; _ } = Hashtbl.length (Data.players map)
+  let max_players { map ; _ } = Data.map_nb_players map
 
   (* Treat message as authentified user [cid] in state [state] *)
   let treat_message cid state = function
@@ -214,16 +214,16 @@ module Server = struct
     Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
     let map = Data.map_of_string s in
     Meta.Client.add meta ~addr ~name:"CATSERV"
-      ~nb_players:(Hashtbl.length (Data.players map)) >>= function
+      ~nb_players:(Data.map_nb_players map) >>= function
         | None -> assert false (* TODO *)
         | Some game ->
             let params =
               { p_game_time = max_int - 1
-              ; p_bomb_time = 4
+              ; p_bomb_time = 6
               ; p_bomb_dist = 2
               ; p_map_width = Data.width map
               ; p_map_height = Data.height map
-              ; p_turn_time = 2000
+              ; p_turn_time = 200
               ; p_start_delay = 3000
               ; p_version = 1
               } in
