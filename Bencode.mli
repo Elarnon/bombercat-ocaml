@@ -29,6 +29,13 @@ val of_string : string -> t option
 (** Converts a bencodable value to a string *)
 val to_string : t -> string
 
+(** Converts as many bencode velues to a string of length at most [len] as
+ * possible, and returns both that string and the number of bencoded values that
+ * was converted. *)
 val most_to_string : int -> t list -> string * int
 
+(** Converts all bencoded values to as many strings of length at most [len] as
+ * needed, and returns those.
+ * [all_to_strings] loops infinitely if any value translates to a string of
+ * length greater than [len]. *)
 val all_to_strings : int -> t list -> string list

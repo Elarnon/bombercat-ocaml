@@ -1,5 +1,7 @@
 open Misc
 
+(* Modules to make our monadic code work both in Lwt and Identity monads *)
+
 module type CharStream = sig
   module Monad : sig
     type 'a t
@@ -82,6 +84,8 @@ module LwtCharStream = struct
   include Lwt_stream
 end
 
+(* Real stuff *)
+
 type t =
   | S of string
   | I of int 
@@ -94,6 +98,8 @@ module Make(S : CharStream) = struct
 
   open S.Monad
 
+  (* Gets [n] characters from [s] and returns then as a list, in reverse order
+   *)
   let nget_rev n s =
     let rec nget_ acc = function
       | 0 -> return acc
@@ -102,6 +108,11 @@ module Make(S : CharStream) = struct
           nget_ (c :: acc) (n - 1)
     in nget_ [] n
 
+  (* Finishes reading a bencoded integer from [s]. [neg] indicates whether this
+   * integer must be returned as a negative value or not, [value] keeps the
+   * currently read value (ie, the value read with the previous chars) and
+   * [endchar], which should be either ':' or 'e', is the character that marks
+   * the end of the integer. *)
   let rec continue_bint s neg value endchar =
     S.next s >>= fun c ->
       if '0' <= c && c <= '9' then
@@ -114,6 +125,9 @@ module Make(S : CharStream) = struct
           ("Unexpected character `%c` while reading a bencoded integer "
           ^^ "(expecting a digit or `%c`).") c endchar))
     
+  (* Reads a negative integer, knowing that the '-' sign has already been
+   * consumed, from [s]. [endchar] is the character marking the end of the
+   * integer. *)
   let negative_bint s endchar =
     S.next s >>= function
       | c when '1' <= c && c <= '9' -> continue_bint s true 0 endchar
@@ -122,6 +136,9 @@ module Make(S : CharStream) = struct
             ("Unexpected character `%c` after minus sign in bencoded integer "
             ^^ " (expecting a digit).") c))
     
+  (* Reads a zero, knowing that the '0' character has already been consumed,
+   * from [s]. [endchar] is the character marking the end of the integer, which
+   * must be the next character in the stream. *)
   let read_bzero s endchar =
     S.next s >>= fun c ->
       if c = endchar
@@ -131,6 +148,7 @@ module Make(S : CharStream) = struct
           ("Unexpected character `%c` after reading a zero in bencode (`%c` "
           ^^ "expected).") c endchar))
 
+  (* Reads an integer from [s], with [endchar] as an end delimiter. *)
   let read_bint s endchar =
     S.peek s >>= function
       | Some '-' ->
@@ -147,6 +165,8 @@ module Make(S : CharStream) = struct
       | None ->
           fail S.Empty
 
+  (* Reads a list of values from [s], accumulating them into [acc], knowing that
+   * the initial 'l' has already been consumed. *)
   let rec read_blist s acc =
     S.peek s >>= fun c ->
       if c = Some 'e' then
@@ -156,6 +176,9 @@ module Make(S : CharStream) = struct
         read_bencode s >>= fun v ->
         read_blist s (v :: acc)
     
+  (* Reads a dictionary of values from [s], accumulating them in [map], and
+   * using [last] to check that the keys are in order. The initial 'd' has
+   * already been consumed. *)
   and read_bdict s map last =
     S.peek s >>= function
       | Some 'e' -> S.junk s >>= fun () -> return map
@@ -170,6 +193,7 @@ module Make(S : CharStream) = struct
       | None ->
           fail S.Empty
 
+  (* Reads a string from [s], without prerequisite *)
   and read_bstring s =
     read_bint s ':' >>= fun len ->
     nget_rev len s >>= fun l ->
@@ -177,6 +201,8 @@ module Make(S : CharStream) = struct
     list_iteri (fun i c -> s.[len - i - 1] <- c) l;
     return s
 
+  (* Deterministically calls, by lookup of the first char in [s], the correct
+   * data reader. *)
   and read_bencode s =
     S.peek s >>= function
       | Some 'i' ->
@@ -199,6 +225,7 @@ module Make(S : CharStream) = struct
       | None ->
           fail S.Empty
 
+  (* Converts a stream of characters into a bencoded value *)
   let of_stream stream =
     catch (fun () ->
       S.is_empty stream >>= fun empty ->
@@ -210,6 +237,7 @@ module Make(S : CharStream) = struct
                   "Unexpected end of stream while reading a bencoded value.")
          | e -> fail e)
 
+  (* Converts a bencoded value into a string... *)
   let rec to_string = function
     | S s -> string_of_int (String.length s) ^ ":" ^ s
     | I i -> "i" ^ string_of_int i ^ "e"
@@ -221,15 +249,18 @@ module Make(S : CharStream) = struct
           s ^ to_string (S k) ^ to_string v) m "d" in
         beginning ^ "e"
 
+  (* ... in order to make it a stream. *)
   let to_stream v =
     S.of_string (to_string v)
 
 end
 
+(* Creates the modules with "string" streams and Lwt_stream.t *)
 module BString = Make(StringCharStream)
 
 module BStream = Make(LwtCharStream)
 
+(* Use them to define the conversion functions *)
 let to_string b = fst @$ BString.to_stream b
 
 let to_stream = BStream.to_stream
