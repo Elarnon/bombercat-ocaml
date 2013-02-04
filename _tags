@@ -1,7 +1,9 @@
-<*.ml{,i}> or <{server,{gtk,cli}_client}.{native,d.byte}>: package(lwt.unix), package(lambda-term)
+<*.ml{,i}> or <{server,{gtk,cli}_client}.{native,d.byte}>: package(lwt.unix), package(lwt.syntax),  syntax(camlp4of), package(lambda-term)
 
 <{gtk_client}.{ml,native,d.byte}>: package(lablgtk2), package(lwt.glib)
 
-<{Protocol,Bencode,Network,Meta,Initialisation}.ml{,i}>: package(lwt.unix)
+<{Protocol,Bencode,Network,Meta,Initialisation}.ml{,i}>: package(lwt.unix), package(lwt.syntax), syntax(camlp4of)
 
-<Data.{ml{,i},native}>: package(lwt.unix), package(lambda-term)
+<*.ml{,i}>: syntax(camlp4o), package(lwt.syntax)
+
+<Data.{ml{,i},native}>: package(lwt.unix), package(lwt.syntax), package(lambda-term), syntax(camlp4of)

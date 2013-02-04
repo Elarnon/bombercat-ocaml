@@ -1,1 +1,1 @@
-<*.ml>: for-pack(Protocol), package(lwt)
+<*.ml>: for-pack(Protocol), package(lwt.syntax), syntax(camlp4o)
