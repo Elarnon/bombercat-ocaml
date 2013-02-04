@@ -145,8 +145,8 @@ module Make(S : CharStream) = struct
       then return 0
       else
         fail (Format_error (Format.sprintf
-          ("Unexpected character `%c` after reading a zero in bencode (`%c` "
-          ^^ "expected).") c endchar))
+          ("Unexpected character `%c` after reading a zero in bencode "
+          ^^ "(expecting `%c`).") c endchar))
 
   (* Reads an integer from [s], with [endchar] as an end delimiter. *)
   let read_bint s endchar =
@@ -160,8 +160,8 @@ module Make(S : CharStream) = struct
       | Some c when '1' <= c && c <= '9' -> continue_bint s false 0 endchar
       | Some c ->
           fail (Format_error (Format.sprintf
-            "Unexpected character `%c` while reading bencode integer (read_bint)."
-            c))
+            ("Unexpected character `%c` while reading a bencoded integer "
+            ^^ " (expecting `-` or a digit).") c))
       | None ->
           fail S.Empty
 
