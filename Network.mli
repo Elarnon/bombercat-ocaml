@@ -49,7 +49,7 @@ module TCP : sig
     val close : t -> unit
 
     val establish_server :
-        ?close:(client -> unit Lwt.t) -> addr ->
+        ?close:(client -> unit) -> addr ->
         (client -> input Lwt_stream.t -> output Lwt_stream.t)  ->
         Lwt_io.server
   end

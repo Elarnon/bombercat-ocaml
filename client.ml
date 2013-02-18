@@ -6,11 +6,14 @@ let port = ref 12345
 let meta = ref "127.0.0.1"
 let addr = ref "127.0.0.1"
 
+let sfml = ref false
+
 let spec =
   [ "--port", Arg.Set_int (port), "The port of the game server to connect to."
   ; "--meta-port", Arg.Set_int mport, "The TCP port of the meta server to connect to"
   ; "--meta", Arg.Set_string meta, "The address of the meta server to connect to"
   ; "--address", Arg.Set_string addr, "The address of the game server to connect to"
+  ; "--sfml", Arg.Bool (fun x -> sfml := x), "Use Ocsfml client"
   ]
 
 let pseudo = ref "elarnon"
@@ -52,7 +55,9 @@ let _ =
                   loop ()
               | Some `Closed -> return ()
               | Some (`Start (_, _)) ->
-                  Game.Client.main init_addr map params players ident
+                  let display = if !sfml then OcsfmlDisplay.create
+                  else LTermDisplay.create in
+                  Game.Client.main display init_addr map params players ident
           in loop ()
     with Not_found -> Lwt_log.fatal "Bad address." >> exit 2
     ) ())

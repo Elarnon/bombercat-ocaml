@@ -89,7 +89,7 @@ module TCP = struct
     val close : t -> unit
 
     val establish_server :
-        ?close:(client -> unit Lwt.t) -> addr
+        ?close:(client -> unit) -> addr
         -> (client -> input Lwt_stream.t -> output Lwt_stream.t)
         -> Lwt_io.server
   end
@@ -126,7 +126,7 @@ module TCP = struct
       return (inp, outp, ref [])
 
     let establish_server
-      ?(close=fun _ -> return ())
+      ?(close=fun _ -> ())
       addr
       f =
       let cli_id = ref 0 in
@@ -147,7 +147,7 @@ module TCP = struct
                   return id)
                 (function
                   | Unix.Unix_error (Unix.ENOTCONN, _, _) -> return id
-                  | e -> fail e) >>= close
+                  | e -> fail e) >|= close
           end)
   end
 
@@ -164,8 +164,12 @@ module UDP = struct
 
   let close = U.close
 
+  let _ = Random.self_init ()
+
   let sendto fdescr str addr =
     let len = String.length str in
+    Lwt.async (fun () -> Lwt_log.debug str);
+    (* if Random.int 10 < 3 then true else *)
     if len > 65535 then false else begin
       Lwt.async (wrap_eintr (fun () ->
         match U.state fdescr with

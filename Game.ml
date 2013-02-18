@@ -5,6 +5,11 @@ open Protocol.Game
 
 module R = Reorderable
 
+let window = 1
+
+let max_size = 2
+
+
 module Server = struct
 
   type player_internal =
@@ -41,10 +46,6 @@ module Server = struct
   let is_player { players; _ } id = Hashtbl.mem players id
 
   let id_of_map { reverse; _ } mid = Hashtbl.find reverse mid
-
-  let window = 3
-
-  let max_size = 5
 
   let check_author pi id from =
     Some from = pi.pi_author
@@ -218,7 +219,7 @@ module Client = struct
     }
 
   let resync t =
-    let tout = float_of_int (t.params.p_turn_time) /. 1000. in
+    let tout = float_of_int (t.params.p_turn_time) /. 4000. in
     let now = Unix.gettimeofday () in
     if now -. t.last_sync > tout then begin
       t.last_sync <- now;
@@ -229,7 +230,7 @@ module Client = struct
 
   let treat_message t turn =
     let id = match turn with | TURN (id, _) | GAMEOVER (id, _) -> id in
-    if not (R.add t.turns id turn) && not (R.is_full t.turns) then (* OOS *)
+    if not (R.add t.turns id turn) then (* OOS *)
       resync t
 
   let rec treat_input t =
@@ -240,18 +241,22 @@ module Client = struct
         | None -> Display.quit t.display
         | Some (str, addr) when addr = t.server ->
             let servers = string_to_servers str in
-            List.iter (treat_message t) servers;
+            Lwt_list.iter_s (fun m -> treat_message t m; Lwt_main.yield ())
+            servers >>
             treat_input t
         | _ -> treat_input t
     with Lwt_unix.Timeout -> resync t; treat_input t
+
+  let resend_commands t =
+    let str, _ = most_clients_to_string (firsts 5 t.logs) in
+    ignore (Network.UDP.sendto t.socket str t.server);
+    return_unit
 
   let send_command t command =
     let res = COMMAND (t.ident, t.sequence, t.reject, command) in
     t.logs <- res :: t.logs;
     t.sequence <- t.sequence + 1;
-    let str, _ = most_clients_to_string (firsts 3 t.logs) in
-    ignore (Network.UDP.sendto t.socket str t.server);
-    return_unit
+    resend_commands t
 
   let rec treat_commands t =
     Display.input t.display >>= function
@@ -261,6 +266,7 @@ module Client = struct
   let rec update_map t =
     let tout = float_of_int t.params.p_turn_time /. 1000. *. 0.5 in
     Lwt_unix.sleep tout >>= fun () ->
+    resend_commands t >>
     let module X = struct exception Win of string option end in
     begin try while true do
       match R.take t.turns with
@@ -286,10 +292,10 @@ module Client = struct
       | R.Empty -> update_map t
       | X.Win winner -> return (Some winner) end
 
-  let main addr map params players ident =
+  let main dcreate addr map params players ident =
     let open Initialisation in
     let map_id = snd @$ Hashtbl.find players ident in
-    lwt display = OcsfmlDisplay.create map params map_id in
+    lwt display = dcreate map params map_id in
     let t =
       { params
       ; map
@@ -303,11 +309,12 @@ module Client = struct
       ; logs = []
       ; socket = Network.UDP.create ()
       ; server = addr
-      ; turns = R.create 17
+      ; turns = R.create ~window:5 ~max_size:3 17
       ; last_sync = 0.0
       ; redraw = Lwt_condition.create ()
       } in
     Display.update display 0;
+    resync t;
     Lwt.pick [
      update_map t;
      treat_commands t >> return_none;

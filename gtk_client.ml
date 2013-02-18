@@ -1,6 +1,19 @@
 open Lwt
 open Gobject.Data
 
+let mport = ref 22222
+
+let spec =
+  [ "--port", Arg.Set_int (mport), "The port the initialisation and game servers should listen to."
+  ]
+
+let ip = ref "127.0.0.1"
+
+let anon s =
+  ip := s
+
+let usage = "./game_server [--port <meta port>]  [<meta address>]"
+
 let cols        = new GTree.column_list
 let col_name    = cols#add string
 let col_ip      = cols#add string
@@ -60,6 +73,11 @@ let create_view ~model ~packing () =
   view
 
 let () = Lwt_main.run (
+  Arg.parse
+    spec
+    anon
+    usage;
+
   (* Initializes GTK. *)
   ignore (GMain.init ());
 
@@ -74,7 +92,7 @@ let () = Lwt_main.run (
 
   let box = GPack.vbox ~homogeneous:false ~packing:window#add () in
 
-  lwt addr = Network.parse_addr "127.0.0.1:22222" in
+  lwt addr = Network.mk_addr ~port:!mport !ip in
   lwt co = Meta.Client.Connection.open_connection addr in
   let rec poll () =
     Lwt_unix.sleep 1.0 >>= fun () ->

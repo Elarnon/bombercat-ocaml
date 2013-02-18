@@ -273,7 +273,7 @@ let most_to_string len vs =
     | [] -> "l" ^ str ^ "e", n
     | elt :: rest ->
         let bstr = to_string elt in
-        let nstr = str ^ bstr in
+        let nstr = bstr ^ str in
         if String.length nstr > len - 2 then
           ("l" ^ str ^ "e", n)
         else

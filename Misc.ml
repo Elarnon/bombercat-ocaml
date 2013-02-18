@@ -62,6 +62,19 @@ let hashtbl_take t k =
   Hashtbl.remove t k;
   v
 
+module Hashtbl = struct
+  include Hashtbl
+
+  let take t k =
+    let v = find t k in
+    remove t k;
+    v
+
+  let values t =
+    fold (fun _ v l -> v :: l) t []
+
+end
+
 let queue_junk queue = 
   let _ = Queue.take queue in ()
 
