@@ -113,10 +113,11 @@ module Server = struct
             state.next_id <- state.next_id + 1;
             (* Get JOIN to send back from other players. Should be useless now,
              * investigate (TODO). *)
-            let joins = Hashtbl.fold
+            (* let joins = Hashtbl.fold
               (fun o_id (o_pseudo, o_pos) l ->
                 JOIN (o_pseudo, o_id, o_pos) :: l)
-              state.players [] in
+              state.players [] in *)
+            let joins = [] in
             Hashtbl.add state.players s (pseudo, c);
             (* Broadcast join message *)
             Lwt_condition.broadcast state.updated ();
@@ -168,7 +169,6 @@ module Server = struct
             end
         | Some (`Start (x,y)) ->
             push (Some (START (x, y)));
-            push None;
             return ()
         | Some (`Join (s, s', c)) ->
             push (Some (JOIN (s, s', c)));
@@ -188,7 +188,7 @@ module Server = struct
       Meta.Client.update
         state.meta
         ~id:state.game.Protocol.Meta.game_id
-        ~nb_players:(max_players state - nb_players state);
+        ~nb_players:(nb_players state);
     if nb_players state = max_players state then begin
       (* Ready to start ! *)
       Lwt_io.shutdown_server server;
@@ -210,12 +210,12 @@ module Server = struct
 
   let create addr meta =
     Unix.handle_unix_error (fun () ->
-    (* Load the world, TODO ? *)
+    (* Load the world *)
     Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
     let map = Data.map_of_string s in
     Meta.Client.add meta ~addr ~name:"CATSERV"
       ~nb_players:(Data.map_nb_players map) >>= function
-        | None -> assert false (* TODO *)
+        | None -> return_none
         | Some game ->
             let params =
               { p_game_time = max_int - 1
@@ -231,7 +231,7 @@ module Server = struct
             let server = Connection.establish_server
               addr
               (fun client stream -> treat state stream)
-            in handle_server server state
+            in handle_server server state >|= fun x -> Some x
   ) ()
 
 end

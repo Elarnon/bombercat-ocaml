@@ -10,7 +10,7 @@ module Server : sig
 
   (* type server *)
 
-  val create : Network.addr -> Meta.Client.Connection.t -> game Lwt.t
+  val create : Network.addr -> Meta.Client.Connection.t -> game option Lwt.t
 
   (* val shutdown : server -> unit *)
 

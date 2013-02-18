@@ -15,3 +15,5 @@ val take : 'a t -> 'a
 val junk : 'a t -> unit
 
 val last_id : 'a t -> int
+
+val is_full : 'a t -> bool

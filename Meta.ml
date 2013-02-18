@@ -5,8 +5,6 @@ module S = Lwt_stream
 
 module Server = struct
 
-  type server = Lwt_io.server
-
   module Connection = Network.TCP.Make(Protocol.Meta.Server)
 
   (* Internal structure to represent a table of games *)
@@ -16,12 +14,14 @@ module Server = struct
       { tbl : ('a, 'b) Hashtbl.t
       ; mutable next_id : int
       ; ids : (Connection.client, 'a list) Hashtbl.t
+      ; mutable running : bool
       }
 
     let create n =
       { tbl = Hashtbl.create n
       ; next_id = 1
       ; ids = Hashtbl.create n
+      ; running = true
       }
 
     let add servers client id game =
@@ -58,10 +58,15 @@ module Server = struct
       Lwt_list.iter_p (remove servers) ids
   end
 
+  type server =
+    { server : Lwt_io.server
+    ; games : (int, Protocol.Meta.game) Games.t }
+
   let treat_client servers client stream =
     S.flatten (S.from begin fun () ->
       S.get stream >>= function
-        | None -> return None
+        | None -> return_none
+        | _ when not servers.Games.running -> return_none
         | Some (ADD (addr, name, nb_players)) ->
             lwt id = Games.next_id servers in
             let game = 
@@ -87,13 +92,15 @@ module Server = struct
 
   let create addr =
     let servers = Games.create 17 in
-    Connection.establish_server
-      ~close:(fun cli -> Games.remove_from servers cli)
-      addr
-      (treat_client servers)
+    { server = Connection.establish_server
+        ~close:(fun cli -> Games.remove_from servers cli)
+        addr
+        (treat_client servers)
+    ; games = servers }
 
-  let shutdown server =
-    Lwt_io.shutdown_server server (* TODO, close everything *)
+  let shutdown { server; games } =
+    games.Games.running <- false;
+    Lwt_io.shutdown_server server
 end
 
 module Client = struct
@@ -106,8 +113,15 @@ module Client = struct
       | Some (ADDED game_id) -> return @$ Some
         { game_id; game_addr = addr; game_name = name
         ; game_nb_players = 0 ; game_max_players = nb_players }
-      | Some _ -> assert false (* TODO *)
-      | None -> return_none
+      | Some (GAMES games) -> 
+          Lwt_log.error
+            ("Meta protocol error: `GAMES' message received where a `ADDED' "
+            ^"message was expected.") >>
+          return_none
+      | None ->
+          Lwt_log.info
+            ("Meta server closed the connection.") >>
+          return_none
 
   let update srv ~id ~nb_players =
     Connection.send srv (UPDATE (id, nb_players))
@@ -118,7 +132,15 @@ module Client = struct
   let list_games srv =
     Connection.send srv LIST;
     Connection.recv srv >>= function
-      | Some (GAMES games) -> return @$ Some games
-      | Some _ -> assert false (* TODO *)
-      | None -> return_none
+      | Some (GAMES games) ->
+          return @$ Some games
+      | Some (ADDED id) ->
+          Lwt_log.error
+            ("Meta protocol error: `ADDED' message received where a `GAMES'"
+            ^" message was expected.") >>
+          return_none
+      | None ->
+          Lwt_log.info
+            ("Meta server closed the connection.") >>
+          return_none
 end

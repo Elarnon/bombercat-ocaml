@@ -63,8 +63,12 @@ let encode_client = function
 
 let decode_client = let open Bencode in function
   | L ( S "ADD" :: S ip :: I port :: S name :: I nb_players :: _ ) ->
-      mk_addr ~port ip >>= fun addr -> (* TODO: try/catch *)
-      if nb_players < 0
+      lwt addr =
+        try_lwt mk_addr ~port ip
+        with Not_found -> fail (Error
+          ("Ill-formed address received in ADD message from a Protocol.Meta
+          client."))
+      in if nb_players < 0
       then
         fail (Error 
           ("Unexpected negative number of players while reading ADD message "

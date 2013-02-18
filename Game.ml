@@ -206,79 +206,67 @@ module Client = struct
     ; ident : string
     ; pseudo : string
     ; map_id : char
+    ; display : Display.t
     ; mutable reject : int
     ; mutable sequence : int
+    ; mutable logs : Protocol.Game.client list
     ; socket : Network.UDP.t
     ; server : Network.addr
     ; turns : Protocol.Game.server R.t
-    ; mutable oos : bool
-    ; redraw : unit Lwt_condition.t
+    ; mutable last_sync : float
+    ; redraw : int Lwt_condition.t
     }
+
+  let resync t =
+    let tout = float_of_int (t.params.p_turn_time) /. 1000. in
+    let now = Unix.gettimeofday () in
+    if now -. t.last_sync > tout then begin
+      t.last_sync <- now;
+      let strs = all_clients_to_strings [ SYNC (t.ident, R.last_id t.turns) ] in
+      List.iter (fun str ->
+        ignore (Network.UDP.sendto t.socket str t.server)) strs
+    end
 
   let treat_message t turn =
     let id = match turn with | TURN (id, _) | GAMEOVER (id, _) -> id in
-    t.oos <- not (R.add t.turns id turn)
+    if not (R.add t.turns id turn) && not (R.is_full t.turns) then (* OOS *)
+      resync t
 
   let rec treat_input t =
     try_lwt
       let tout = float_of_int (t.params.p_turn_time) /. 1000. *. 4. in
       Lwt_unix.with_timeout tout (fun () -> Network.UDP.recvfrom t.socket)
       >>= function
-        | None -> return ()
+        | None -> Display.quit t.display
         | Some (str, addr) when addr = t.server ->
             let servers = string_to_servers str in
             List.iter (treat_message t) servers;
             treat_input t
         | _ -> treat_input t
-    with Lwt_unix.Timeout -> t.oos <- true; treat_input t
+    with Lwt_unix.Timeout -> resync t; treat_input t
 
-  let rec send_syncs t =
-    let tout = float_of_int (t.params.p_turn_time) /. 1000. *. 4.0 in
-    begin if t.oos then
-      let strs = all_clients_to_strings [ SYNC (t.ident, R.last_id t.turns) ] in
-      List.iter (fun str ->
-        ignore (Network.UDP.sendto t.socket str t.server)) strs end;
-    Lwt_unix.sleep tout >>
-    send_syncs t
+  let send_command t command =
+    let res = COMMAND (t.ident, t.sequence, t.reject, command) in
+    t.logs <- res :: t.logs;
+    t.sequence <- t.sequence + 1;
+    let str, _ = most_clients_to_string (firsts 3 t.logs) in
+    ignore (Network.UDP.sendto t.socket str t.server);
+    return_unit
 
-  let treat_event t ev =
-    let open LTerm_event in
-    let open LTerm_key in
-    let pos = Data.map_pos t.map t.map_id in
-    let mk v =
-      let res = COMMAND (t.ident, t.sequence, t.reject, v) in
-      t.sequence <- t.sequence + 1;
-      res in
-    match  ev with
-    | Key { code = Left } ->
-        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Left)) ] in
-        List.iter (fun str ->
-          ignore (Network.UDP.sendto t.socket str t.server)) strs
-    | Key { code = Up } ->
-        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Up)) ] in
-        List.iter (fun str ->
-          ignore (Network.UDP.sendto t.socket str t.server)) strs
-    | Key { code = Down } ->
-        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Down)) ] in
-        List.iter (fun str ->
-          ignore (Network.UDP.sendto t.socket str t.server)) strs
-    | Key { code = Right } ->
-        let strs = all_clients_to_strings [ mk (MOVE (pos, Data.Right)) ] in
-        List.iter (fun str ->
-          ignore (Network.UDP.sendto t.socket str t.server)) strs
-    | Key { code = Char c } when c = CamomileLibrary.UChar.of_char 'b' ->
-        let strs = all_clients_to_strings [ mk (BOMB pos) ] in
-        List.iter (fun str ->
-          ignore (Network.UDP.sendto t.socket str t.server)) strs
-    | _ -> ()
+  let rec treat_commands t =
+    Display.input t.display >>= function
+      | None -> Display.quit t.display
+      | Some command -> send_command t command >> treat_commands t
 
   let rec update_map t =
     let tout = float_of_int t.params.p_turn_time /. 1000. *. 0.5 in
     Lwt_unix.sleep tout >>= fun () ->
+    let module X = struct exception Win of string option end in
     begin try while true do
       match R.take t.turns with
-      | TURN (_, actions) ->
+      | TURN (tid, actions) ->
           Smap.iter (fun ident actions ->
+            try
             let map_id = snd @$ Hashtbl.find t.players ident in
             List.iter (function
               | CLIENT (MOVE (pos, dir)) ->
@@ -288,32 +276,44 @@ module Client = struct
                   and bdist = t.params.p_bomb_dist in
                   ignore (Data.try_bomb t.map map_id pos btime bdist)
               | NOP _ -> t.sequence <- 0; t.reject <- t.reject + 1
-              | DEAD -> ()) actions) actions;
+              | DEAD -> ()) actions
+            with Not_found -> (* TODO log *) ()) actions;
           ignore (Data.decrease_timers t.map);
-          Lwt_condition.broadcast t.redraw ()
-      | GAMEOVER (_, stats) -> () (* TODO *)
-    done; return () with R.Empty -> update_map t end
+          Display.update t.display tid
+      | GAMEOVER (_, { winner }) ->
+         raise (X.Win winner)
+    done; return_none with
+      | R.Empty -> update_map t
+      | X.Win winner -> return (Some winner) end
 
   let main addr map params players ident =
     let open Initialisation in
+    let map_id = snd @$ Hashtbl.find players ident in
+    lwt display = LTermDisplay.create map params map_id in
     let t =
       { params
       ; map
+      ; display
       ; players
       ; ident
       ; pseudo = fst @$ Hashtbl.find players ident
-      ; map_id = snd @$ Hashtbl.find players ident
+      ; map_id
       ; reject = 0
       ; sequence = 0
+      ; logs = []
       ; socket = Network.UDP.create ()
       ; server = addr
       ; turns = R.create 17
-      ; oos = false
+      ; last_sync = 0.0
       ; redraw = Lwt_condition.create ()
       } in
-    Lwt.async (fun () -> Data.display t.map (treat_event t) t.redraw);
-    Lwt.async (fun () -> update_map t);
-    Lwt.async (fun () -> send_syncs t);
-    treat_input t
+    Display.update display 0;
+    Lwt.pick [
+     update_map t;
+     treat_commands t >> return_none;
+     treat_input t >> return_none] >>= function
+       | None -> print_endline "unexpected end of game"; return_unit
+       | Some None -> print_endline "no winner"; return_unit
+       | Some (Some winner) -> print_endline (winner ^ " wins!"); return_unit
 
 end

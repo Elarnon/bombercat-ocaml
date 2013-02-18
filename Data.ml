@@ -1,11 +1,25 @@
 open Lwt
 open CamomileLibrary
 
-type map_case =
+type case =
   | Empty
-  | Indestructible
   | Destructible
-  | Bomb of int * int * (int * int) Lwt_sequence.node
+  | Indestructible
+  | Bomb of int
+
+type variant =
+  [ `Empty
+  | `Destroying
+  | `Indestructible
+  | `Destructible
+  | `Bomb of int * int * (int * int) Lwt_sequence.node ]
+
+let of_variant = function
+  | `Empty -> Empty
+  | `Destroying -> assert false
+  | `Indestructible -> Indestructible
+  | `Destructible -> Destructible
+  | `Bomb (timer, _, _) -> Bomb timer
 
 type dir = Left | Right | Up | Down
 
@@ -14,7 +28,7 @@ type pos = int * int
 type map = 
   { width : int
   ; height : int
-  ; content : (map_case * char list) array array
+  ; content : (variant * char list) array array
   ; players : (char, (int * int)) Hashtbl.t
   ; bombs : (int * int) Lwt_sequence.t
   }
@@ -31,6 +45,12 @@ let players { players ; _ } = players
 let width { width; _ } = width
 
 let height { height; _ } = height
+
+let iter_content f { content; _ } =
+  Array.iteri (fun x ->
+      Array.iteri (fun y v ->
+        f (x, y) (of_variant (fst v))))
+    content
 
 let iter_players f { players; _ } =
   Hashtbl.iter f players
@@ -93,10 +113,10 @@ let content_in lst map pos =
   try List.mem (map_get map pos) lst with Invalid_argument _ -> false
 
 let is_free_for_move map pos =
-  content_in [ Empty ] map pos
+  content_in [ `Empty ] map pos
 
 let is_free_for_bomb map pos =
-  content_in [ Empty ] map pos
+  content_in [ `Empty ] map pos
 
 let try_move map player pos dir =
   match after_move map player pos dir with
@@ -115,7 +135,7 @@ let can_bomb map player ((x, y) as pos) =
 let try_bomb map player ((x, y) as pos) timer dist =
   if can_bomb map player pos then begin
     let node = Lwt_sequence.add_r pos map.bombs in
-    map_set map pos (Bomb (timer, dist, node));
+    map_set map pos (`Bomb (timer, dist, node));
     true
   end else false
 
@@ -134,43 +154,50 @@ let blast ?(killed=[]) map pos dist =
     let killed = List.fold_left
       (fun killed id -> if kill map id then id :: killed else killed) k players
     in killed
-  in let rec blast_impl map pos dist killed =
+  in let rec blast_impl map pos dist killed destroyed =
     if is_pos_valid map pos then begin
       let killed0 = killall map pos killed in
-      let killed1 = explode map pos dist Left killed0 in
-      let killed2 = explode map pos dist Right killed1 in
-      let killed3 = explode map pos dist Up killed2 in
-      explode map pos dist Down killed3
+      let killed1 = explode map pos dist Left killed0 destroyed in
+      let killed2 = explode map pos dist Right killed1 destroyed in
+      let killed3 = explode map pos dist Up killed2 destroyed in
+      explode map pos dist Down killed3 destroyed
     end else killed
-  and explode map pos dist dir killed =
+  and explode map pos dist dir killed destroyed =
     if dist > 0 && is_pos_valid map pos then
       match map_get map pos with
-      | Empty -> begin
+      | `Empty -> begin
         let killed' = killall map (pos ++> dir) killed in
-        explode map (pos ++> dir) (dist - 1) dir killed'
+        explode map (pos ++> dir) (dist - 1) dir killed' destroyed
       end
-      | Indestructible -> killed
-      | Destructible -> map_set map pos Empty; killed
-      | Bomb (_, dist', node) -> begin
+      | `Indestructible -> killed
+      | `Destructible ->
+          destroyed := pos :: !destroyed;
+          map_set map pos `Destroying; killed
+      | `Destroying -> killed
+      | `Bomb (_, dist', node) -> begin
         Lwt_sequence.remove node;
-        map_set map pos Empty;
-        let killed' = blast_impl map pos dist' killed in
-        explode map (pos ++> dir) (dist - 1) dir killed'
+        map_set map pos `Empty;
+        let killed' = blast_impl map pos dist' killed destroyed in
+        explode map (pos ++> dir) (dist - 1) dir killed' destroyed
       end
     else killed
-  in blast_impl map pos dist killed
+  in
+    let destroyed = ref [] in
+    let res = blast_impl map pos dist killed destroyed in
+    List.iter (fun pos -> map_set map pos `Empty) !destroyed;
+    res
 
 let decrease_timers ({ bombs; _ } as map) =
   Lwt_sequence.fold_l
     (fun pos killed ->
       match map_get map pos with
-      | Bomb (timer, dist, node) when timer <= 0 -> begin (* BOOM! *)
+      | `Bomb (timer, dist, node) when timer <= 0 -> begin (* BOOM! *)
         Lwt_sequence.remove node;
-        map_set map pos Empty;
+        map_set map pos `Empty;
         blast ~killed map pos dist
       end
-      | Bomb (timer, dist, node) -> begin
-        map_set map pos (Bomb (timer - 1, dist, node));
+      | `Bomb (timer, dist, node) -> begin
+        map_set map pos (`Bomb (timer - 1, dist, node));
         killed
       end
       | _ -> assert false (* Wow, error there. *))
@@ -182,7 +209,7 @@ exception InvalidMap
 let empty_map ~width:m ~height:m' =
   { width = m
   ; height = m'
-  ; content = Array.init m (fun _ -> Array.make m' (Empty, []))
+  ; content = Array.init m (fun _ -> Array.make m' (`Empty, []))
   ; players = Hashtbl.create 17
   ; bombs = Lwt_sequence.create ()
   }
@@ -195,13 +222,15 @@ let map_of_string s =
   let res, players = ref [], ref [] in
   for i = 0 to l - 1 do
     begin match s.[i] with
-    | '#' -> res := (!x, !y, Indestructible) :: !res
-    | '$' -> res := (!x, !y, Destructible) :: !res
+    | '#' -> res := (!x, !y, `Indestructible) :: !res
+    | '$' -> res := (!x, !y, `Destructible) :: !res
     | s when 'A' <= s && s <= 'Z' ->
         players := (!x, !y, s) :: !players;
         nb_players := !nb_players + 1
     | '\n' -> w := max !w !x; x := -1; y := !y + 1
-    | _ -> ()
+    | ' ' -> ()
+    | c ->
+        raise InvalidMap
     end;
     x := !x + 1;
   done;
@@ -229,9 +258,10 @@ let string_of_map { width; height; content; players } =
       Array.iteri
         (fun y ->
           function
-            | Indestructible, _ -> put x y '#'
-            | Destructible, _ -> put x y '$'
-            | Bomb (_, _, _), _ | Empty, _ -> ()))
+            | `Indestructible, _ -> put x y '#'
+            | `Destructible, _ -> put x y '$'
+            | `Destroying, _ -> assert false
+            | `Bomb (_, _, _), _ | `Empty, _ -> ()))
     content;
   Hashtbl.iter
     (fun c (x, y) -> put x y c)
@@ -240,51 +270,3 @@ let string_of_map { width; height; content; players } =
     put width i '\n'
   done;
   s
-
-let draw { content; players; _ } ui matrix =
-  let module Ui = LTerm_ui in
-  let module Draw = LTerm_draw in
-  let module Style = LTerm_style in
-  let size = Ui.size ui in
-  let ctx = Draw.context matrix size in
-  Draw.clear ctx;
-  Array.iteri (fun x -> Array.iteri (fun y -> function
-    | Indestructible, _ ->
-        Draw.draw_char ctx y x (UChar.of_char '#')
-    | Destructible, _ ->
-        Draw.draw_char ctx y x (UChar.of_char '$')
-    | Bomb (timer, _, _), _ ->
-        let chr =
-          if timer < 10 then
-            char_of_int (timer + int_of_char '0')
-          else char_of_int (timer - 10 + int_of_char 'A') in
-        let style =
-          Style.({ none with bold = Some true ; background = Some red 
-          ; foreground = Some yellow}) in
-        Draw.draw_char ctx y x ~style (UChar.of_char chr)
-    | Empty, _ -> ())) content;
-  Hashtbl.iter (fun c (x, y) ->
-    Draw.draw_char ctx y x (UChar.of_char c)) players
-
-let display map callback update =
-  let open LTerm_key in
-  let open LTerm_event in
-  let rec loop ui =
-    LTerm_ui.wait ui >>= function
-      | Key { code = Escape } ->
-          return ()
-      | ev ->
-          callback ev;
-          LTerm_ui.draw ui;
-          loop ui
-  in let rec redraw ui =
-    Lwt_condition.wait update >>= fun () ->
-      LTerm_ui.draw ui;
-      redraw ui
-  in lwt term = Lazy.force LTerm.stdout in
-  lwt ui = LTerm_ui.create term (draw map) in
-  try_lwt
-    Lwt.async (fun () -> redraw ui);
-    loop ui
-  finally
-    LTerm_ui.quit ui
