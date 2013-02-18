@@ -76,64 +76,58 @@ let mk position = function
   | Indestructible -> mk_wall position
   | Bomb t -> mk_bomb 0 position
 
-module D = struct
-  type t =
-    { map : Data.map
-    ; params : Protocol.Initialisation.params
-    ; me : char
-    ; app : render_window
-    }
+type t =
+  { map : Data.map
+  ; params : Protocol.Initialisation.params
+  ; me : char
+  ; app : render_window
+  }
 
-  let create map params me =
-    let width = Data.width map * 16
-    and height = Data.height map * 16 in
-    let vm = VideoMode.({ width; height; bits_per_pixel = 32 }) in
-    let app = new render_window vm "Bombercat client v0.1" in
-    return { map; params; me; app }
+let create map params me =
+  let width = Data.width map * 16
+  and height = Data.height map * 16 in
+  let vm = VideoMode.({ width; height; bits_per_pixel = 32 }) in
+  let app = new render_window vm "Bombercat client v0.1" in
+  return { map; params; me; app }
 
-  let update { map; params; me; app } turn =
-    app#clear ();
-    Data.iter_content (fun pos c ->
-      app # draw (mk_empty pos);
-      app # draw (mk pos c)) map;
-    Data.iter_players (fun c pos ->
-      let sprite = mk_up 0 pos in
-      app # draw sprite) map;
-    app # display
+let update { map; params; me; app } turn =
+  app#clear ();
+  Data.iter_content (fun pos c ->
+    app # draw (mk_empty pos);
+    app # draw (mk pos c)) map;
+  Data.iter_players (fun c pos ->
+    let sprite = mk_up 0 pos in
+    app # draw sprite) map;
+  app # display
 
-  let rec input { map; params; me; app } =
-    Lwt_main.yield () >>= fun () ->
-    let open Event in
-    match app#poll_event with
-    | Some e -> begin match e with
-      | Closed -> return_none
-      | KeyPressed { code = KeyCode.Escape } ->
-          return_none
-      | KeyPressed { code } -> begin try
-        let pos = Data.map_pos map me in
-        let open KeyCode in
-        match code with
-        | Left ->
-            return @$ Some (MOVE (pos, Data.Left))
-        | Up ->
-            return @$ Some (MOVE (pos, Data.Up))
-        | Down ->
-            return @$ Some (MOVE (pos, Data.Down))
-        | Right ->
-            return @$ Some (MOVE (pos, Data.Right))
-        | B ->
-            return @$ Some (BOMB pos)
-        | _ -> input { map; params; me; app }
-      with Not_found -> input { map; params; me; app } end
+let rec input { map; params; me; app } =
+  Lwt_main.yield () >>= fun () ->
+  let open Event in
+  match app#poll_event with
+  | Some e -> begin match e with
+    | Closed -> return_none
+    | KeyPressed { code = KeyCode.Escape } ->
+        return_none
+    | KeyPressed { code } -> begin try
+      let pos = Data.map_pos map me in
+      let open KeyCode in
+      match code with
+      | Left ->
+          return @$ Some (MOVE (pos, Data.Left))
+      | Up ->
+          return @$ Some (MOVE (pos, Data.Up))
+      | Down ->
+          return @$ Some (MOVE (pos, Data.Down))
+      | Right ->
+          return @$ Some (MOVE (pos, Data.Right))
+      | B ->
+          return @$ Some (BOMB pos)
       | _ -> input { map; params; me; app }
-    end
-    | None ->
-          input { map; params; me; app }
+    with Not_found -> input { map; params; me; app } end
+    | _ -> input { map; params; me; app }
+  end
+  | None ->
+        input { map; params; me; app }
 
-  let quit { map; params; me; app } =
-    app # close; return ()
-end
-
-let create map params id =
-  let module D = Display.Make(D)
-  in D.create map params id
+let quit { map; params; me; app } =
+  app # close; return ()

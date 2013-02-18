@@ -55,8 +55,9 @@ let _ =
                   loop ()
               | Some `Closed -> return ()
               | Some (`Start (_, _)) ->
-                  let display = if !sfml then OcsfmlDisplay.create
-                  else LTermDisplay.create in
+                  let display = if !sfml then Display.create (module
+                  OcsfmlDisplay : Display.S)
+                  else Display.create (module LTermDisplay : Display.S) in
                   Game.Client.main display init_addr map params players ident
           in loop ()
     with Not_found -> Lwt_log.fatal "Bad address." >> exit 2

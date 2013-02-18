@@ -21,15 +21,14 @@ end
 
 type t = (module T)
 
-module Make(D : S) = struct
-  let create map params id =
-    lwt v = D.create map params id in
-    let module Wrap = struct
-      module D = D
-      let v = v
-    end in
-    return (module Wrap : T)
-end
+let create display map params id =
+  let module Display = (val display : S) in
+  lwt v = Display.create map params id in
+  let module Wrapped = struct
+    module D = Display
+    let v = v
+  end in
+  return (module Wrapped : T)
 
 let update m =
   let module Wrap = (val m : T) in

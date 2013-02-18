@@ -13,9 +13,8 @@ end
 
 type t
 
-module Make(D : S) : sig
-  val create : Data.map -> Protocol.Initialisation.params -> char -> t Lwt.t
-end
+val create :
+  (module S) -> Data.map -> Protocol.Initialisation.params -> char -> t Lwt.t
 
 val update : t -> int -> unit
 
