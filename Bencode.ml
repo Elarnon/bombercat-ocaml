@@ -184,7 +184,6 @@ module Make(S : CharStream) = struct
       | Some 'e' -> S.junk s >>= fun () -> return map
       | Some c ->
           read_bstring s >>= fun key ->
-          (* TODO *)
           if Some key <= last then
             fail (Format_error "Illegal key order in bencoded dictionary.")
           else 
