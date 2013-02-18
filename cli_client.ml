@@ -3,7 +3,7 @@ open Misc
 
 let _ =
   Lwt_main.run (
-    Network.parse_addr "127.0.0.1:12344" >>= fun init_addr ->
+    Network.parse_addr "127.0.0.1:12345" >>= fun init_addr ->
     Random.self_init ();
     let pseudo = char_of_int (int_of_char 'A' + Random.int 26) in
     let pseudo = String.make 1 pseudo in

@@ -289,7 +289,7 @@ module Client = struct
   let main addr map params players ident =
     let open Initialisation in
     let map_id = snd @$ Hashtbl.find players ident in
-    lwt display = LTermDisplay.create map params map_id in
+    lwt display = OcsfmlDisplay.create map params map_id in
     let t =
       { params
       ; map
