@@ -57,10 +57,13 @@ let bdecode_params = let open Bencode in function
             ; p_start_delay = sd
             ; p_version = pv
             }
-        | _ -> fail (Error "bdecode_params")
-      with Not_found -> fail (Error "bdecode_params")
+        | _ -> fail (Error "[Initialisation protocol] Ill-typed game parameters.")
+      with Not_found ->
+        fail (Error "[Initialisation protocol] Missing game parameter")
   end
-  | _ -> fail (Error "becode_params")
+  | _ -> fail
+    (Error ("[Initialisation protocol] Non-dictionary value given as game "
+    ^"parameters."))
 
 type client = 
   | HELLO of string * int list
@@ -86,12 +89,14 @@ let bdecode_client = let open Bencode in function
         Lwt_list.map_p
           (function
             | I i when i > 0 -> return i
-            | _ -> fail (Error "bdecode_client"))
+            | _ -> fail
+              (Error ("[Initialisation protocol] Ill-typed version "
+              ^"number (should be an integer).")))
           bversions
       in versions >>= fun v -> return @$ HELLO (pseudo, v)
   | L ( S "SPECTATOR" :: S pseudo :: _ ) ->
       return @$ SPECTATOR pseudo
-  | _ -> fail (Error "bdecode_client")
+  | _ -> fail (Error "[Initialisation protocol] Unknown message from client.")
 
 let bencode_server = let open Bencode in function
   | REJECTED reason -> L [ S "REJECTED"; S reason ]
@@ -132,10 +137,12 @@ let bdecode_server = let open Bencode in function
             tm_year = tm_year - 1900; tm_yday = 0; tm_wday = 0;
             tm_isdst = false } in
             START (snd (Unix.mktime raw), nano))
-      with Scanf.Scan_failure _ -> fail (Error "bdecode_server start date") end
+      with Scanf.Scan_failure _ ->
+        fail (Error ("[Initialisation protocol] Ill-formated date in START "
+                    ^"message")) end
   | L ( S "QUIT" :: S ident :: _ ) ->
       return @$ QUIT ident
-  | _ -> fail (Error "bdecode_server")
+  | _ -> fail (Error "[Initialisation protocol] Unknown message from server.")
 
 module Server = struct
   type input = client
@@ -147,8 +154,7 @@ module Server = struct
       (function
          | Bencode.Format_error e ->
              Lwt_log.error
-              ("Bencode format error while decoding messages from " ^
-              "Protocol.Init client: " ^ e)
+              ("[Initialisation protocol] Bencode error from client: " ^ e)
          | Error where ->
              Lwt_log.error where
          | exn -> fail exn)
@@ -166,8 +172,7 @@ module Client = struct
       (function
          | Bencode.Format_error e ->
              Lwt_log.error
-              ("Bencode format error while decoding messags from " ^
-              "Protocol.Init server: " ^ e)
+              ("[Initialisation protocol] Bencode error from server: " ^ e)
          | Error where ->
              Lwt_log.error where
          | exn -> fail exn)

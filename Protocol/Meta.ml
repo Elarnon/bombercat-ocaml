@@ -62,26 +62,21 @@ let decode_client = let open Bencode in function
       lwt addr =
         try_lwt mk_addr ~port ip
         with Not_found -> fail (Error
-          ("Ill-formed address received in ADD message from a Protocol.Meta
-          client."))
+          ("[Meta protocol] Unknown address in ADD message."))
       in if nb_players < 0
-      then
-        fail (Error 
-          ("Unexpected negative number of players while reading ADD message "
-          ^ "from a Protocol.Meta client."))
+      then fail (Error
+        ("[Meta protocol] Negative number of players in ADD message."))
       else return (ADD (addr, name, nb_players))
   | L ( S "UPDATE" :: I game_id :: I nb_players :: _ ) ->
       if nb_players < 0
-      then
-        fail (Error
-          ("Unexpected negative number of players while reading ADD message "
-          ^ "from a Protocol.Meta client."))
+      then fail (Error
+        ("[Meta protocol] Negative number of players in UPDATE message."))
       else return (UPDATE (game_id, nb_players))
   | L ( S "DELETE" :: I game_id :: _ ) ->
       return (DELETE game_id)
   | S "LIST" -> return LIST
   | _v ->
-      fail (Error "Invalid message from Protocol.Meta client.")
+      fail (Error ("[Meta protocol] Unknown message from client."))
 
 let bencode_game g =
   let open Bencode in
@@ -110,12 +105,12 @@ let bdecode_game = let open Bencode in function
             ; game_max_players = max_players
             }
       | _ ->
-          fail (Error "Ill-typed game parameters dictionary.")
+          fail (Error "[Meta protocol] Ill-typed game property.")
     with Not_found ->
-      fail (Error "Missing key in game parameters dictionary.")
+      fail (Error "[Meta protocol] Missing game property.")
   end
-  | _ -> fail (Error ("Unexpected non-dictionary value passed as game "
-        ^ "parameters."))
+  | _ -> fail (Error
+    "[Meta protocol] Non-dictionary value received as game properties.")
 
 let encode_server = let open Bencode in function
   | ADDED id -> L [ S "ADDED"; I id ]
@@ -123,11 +118,11 @@ let encode_server = let open Bencode in function
       L (S "GAMES" :: List.map bencode_game games)
 
 let decode_server = let open Bencode in function
-  | L [ S "ADDED"; I id ] -> return (ADDED id)
+  | L ( S "ADDED" :: I id :: _ ) -> return (ADDED id)
   | L (S "GAMES" :: q) ->
       Lwt_list.map_p bdecode_game q >>= fun games ->
       return (GAMES games)
-  | _ -> fail (Error "Invalid message from Protocol.Meta server.")
+  | _ -> fail (Error "[Meta protocol] Unknown message from server.")
 
 module Server = struct
   type input = client
@@ -139,8 +134,7 @@ module Server = struct
       (function
          | Bencode.Format_error e ->
              Lwt_log.error
-              ("Bencode format error while decoding messages from " ^
-              "Protocol.Meta client: " ^ e)
+              ("[Meta protocol] Bencode error from client: " ^ e)
          | Error where ->
              Lwt_log.error where
          | exn -> fail exn)
@@ -159,8 +153,7 @@ module Client = struct
       (function
          | Bencode.Format_error e ->
              Lwt_log.error
-               ("Bencode format error while decoding messages from " ^
-               "Protocol.Meta server: " ^ e)
+              ("[Meta protocol] Bencode error from server: " ^ e)
          | Error where ->
              Lwt_log.error where
          | exn -> fail exn)

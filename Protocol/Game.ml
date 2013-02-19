@@ -36,22 +36,22 @@ let decode_dir = function
   | S "RIGHT" -> Right
   | S "DOWN" -> Down
   | S "LEFT" -> Left
-  | _ -> raise (Error "Invalid dir")
+  | _ -> raise (Error "[Game protocol] Invalid direction.")
 
 let encode_pos (x, y) = L [I x; I y]
 
 let decode_pos = function
-  | L [I x; I y] -> (x, y)
-  | _ -> raise (Error "Invalid position.")
+  | L ( I x :: I y :: _ ) -> (x, y)
+  | _ -> raise (Error "[Game protocol] Invalid position.")
 
 let encode_client_command = function
   | MOVE (pos, dir) -> L [S "MOVE"; encode_pos pos; encode_dir dir]
   | BOMB pos -> L [S "BOMB"; encode_pos pos]
 
 let decode_client_command = function
-  | L [S "MOVE"; pos; dir] -> MOVE (decode_pos pos, decode_dir dir)
-  | L [S "BOMB"; pos] -> BOMB (decode_pos pos)
-  | _ -> raise (Error "Invalid client")
+  | L ( S "MOVE" :: pos :: dir :: _ ) -> MOVE (decode_pos pos, decode_dir dir)
+  | L ( S "BOMB" :: pos :: _ ) -> BOMB (decode_pos pos)
+  | _ -> raise (Error "[Game protocol] Unknown message from client.")
 
 let encode_client = function
   | COMMAND (id, seq, rej, cmd) ->
@@ -80,12 +80,14 @@ let decode_client = function
       | [S id; cmd] ->
           begin match gets ["Sequence"; "Reject"] tbl with
           | [I sq; I rj] -> COMMAND (id, sq, rj, decode_client_command cmd)
-          | _ -> raise (Error "bad")
+          | _ ->
+            raise (Error "[Game protocol] Ill-typed coherence information.")
           end
-      | _ -> raise (Error "worse")
-    with Not_found -> raise (Error "Not_found")
+      | _ -> raise (Error "[Game protocol] Ill-formed command from client.")
+    with Not_found ->
+      raise (Error "[Game protocol] Missing command informations.")
   end
-  | _ -> raise (Error "bad client")
+  | _ -> raise (Error "[Game protocol] Unknown message from client.")
 
 let decode_clients = function
   | L lst -> List.map decode_client lst
@@ -97,7 +99,7 @@ let encode_action = function
   | DEAD -> S "DEAD"
 
 let decode_action = function
-  | L [S "NOP"; I i] -> NOP i
+  | L ( S "NOP" :: I i :: _ ) -> NOP i
   | S "DEAD" -> DEAD
   | cli -> CLIENT (decode_client_command cli)
 
@@ -110,10 +112,10 @@ let decode_stats = function
   | D tbl -> begin
     try begin match Smap.find "WINNER" tbl with
     | S winner -> { winner = Some winner }
-    | _ -> raise (Error "Winner not an identifier.")
+    | _ -> raise (Error "[Game protocol] WINNER field is not an identifier.")
     end with Not_found -> { winner = None }
   end
-  | _ -> raise (Error "bad stats")
+  | _ -> raise (Error "[Game protocol] Non-dictionary value given in GAMEOVER.")
 
 let encode_server ?nops = function
   | TURN (i, tbl) ->
@@ -137,18 +139,18 @@ let all_servers_to_strings ?nops lst =
   all_to_strings 65535 (List.map (encode_server ?nops) lst)
 
 let decode_server = function
-  | L [S "TURN"; I i; D btbl] ->
+  | L ( S "TURN" :: I i :: D btbl :: _ ) ->
       TURN (i, Smap.map (function
         | L lst -> List.map decode_action lst
-        | _ -> raise (Error "bad actions")) btbl)
-  | L [S "GAMEOVER"; I i; stats] -> GAMEOVER (i, decode_stats stats)
-  | _ -> raise (Error "bad server")
+        | _ -> raise (Error "[Game protocol] Ill-formed TURN message.")) btbl)
+  | L ( S "GAMEOVER" :: I i :: stats :: _ ) -> GAMEOVER (i, decode_stats stats)
+  | _ -> raise (Error "[Game protocol] Unknown message from server.")
 
 let decode_servers = function
   | L lst ->
       begin try [decode_server @$ L lst]
       with Error _ -> List.map decode_server lst end
-  | b -> [decode_server b] (* always fail... *)
+  | b -> [decode_server b] (* always fail... but whatever *)
 
 let string_to_servers s =
   try

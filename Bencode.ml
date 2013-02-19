@@ -122,7 +122,7 @@ module Make(S : CharStream) = struct
           return (if neg then -value else value)
       else 
         fail (Format_error (Format.sprintf
-          ("Unexpected character `%c` while reading a bencoded integer "
+          ("Unexpected character `%c` while reading an integer "
           ^^ "(expecting a digit or `%c`).") c endchar))
     
   (* Reads a negative integer, knowing that the '-' sign has already been
@@ -133,7 +133,7 @@ module Make(S : CharStream) = struct
       | c when '1' <= c && c <= '9' -> continue_bint s true 0 endchar
       | c ->
           fail (Format_error (Format.sprintf
-            ("Unexpected character `%c` after minus sign in bencoded integer "
+            ("Unexpected character `%c` after minus sign in integer "
             ^^ " (expecting a digit).") c))
     
   (* Reads a zero, knowing that the '0' character has already been consumed,
@@ -145,7 +145,7 @@ module Make(S : CharStream) = struct
       then return 0
       else
         fail (Format_error (Format.sprintf
-          ("Unexpected character `%c` after reading a zero in bencode "
+          ("Unexpected character `%c` after reading a null integer "
           ^^ "(expecting `%c`).") c endchar))
 
   (* Reads an integer from [s], with [endchar] as an end delimiter. *)
@@ -160,7 +160,7 @@ module Make(S : CharStream) = struct
       | Some c when '1' <= c && c <= '9' -> continue_bint s false 0 endchar
       | Some c ->
           fail (Format_error (Format.sprintf
-            ("Unexpected character `%c` while reading a bencoded integer "
+            ("Unexpected character `%c` while reading an integer "
             ^^ " (expecting `-` or a digit).") c))
       | None ->
           fail S.Empty
@@ -185,7 +185,7 @@ module Make(S : CharStream) = struct
       | Some _ ->
           read_bstring s >>= fun key ->
           if Some key <= last then
-            fail (Format_error "Illegal key order in bencoded dictionary.")
+            fail (Format_error "Illegal key order in dictionary.")
           else 
             read_bencode s >>= fun v ->
             read_bdict s (Smap.add key v map) (Some key)
@@ -219,7 +219,7 @@ module Make(S : CharStream) = struct
           S.junk s >>= fun () -> read_bencode s (* TODO: remove *)
       | Some c ->
           fail (Format_error (Format.sprintf
-            ("Unexpected initial character `%c` for bencoded value (expecting "
+            ("Unexpected initial character `%c` (expecting "
             ^^ "`i`, `l`, `d` or a digit).") c))
       | None ->
           fail S.Empty
@@ -233,7 +233,7 @@ module Make(S : CharStream) = struct
       (function
          | S.Empty ->
              fail (Format_error
-                  "Unexpected end of stream while reading a bencoded value.")
+                  "Unexpected end of connection (probably partial value).")
          | e -> fail e)
 
   (* Converts a bencoded value into a string... *)
@@ -248,7 +248,7 @@ module Make(S : CharStream) = struct
           s ^ to_string (S k) ^ to_string v) m "d" in
         beginning ^ "e"
 
-  (* ... in order to make it a stream. *)
+  (* ... in order to convert it into a stream. *)
   let to_stream v =
     S.of_string (to_string v)
 
