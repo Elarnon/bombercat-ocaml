@@ -5,11 +5,6 @@ open Protocol.Game
 
 module R = Reorderable
 
-let window = 1
-
-let max_size = 2
-
-
 module Server = struct
 
   type player_internal =
@@ -30,6 +25,10 @@ module Server = struct
     ; mutable ended : bool
     ; socket : Network.UDP.t
     }
+
+  let window = 1
+
+  let max_size = 2
 
   (* Turn checking *)
   let turn_is_past { turn; _ } t = t >= 0 && t < turn
@@ -309,7 +308,7 @@ module Client = struct
       ; logs = []
       ; socket = Network.UDP.create ()
       ; server = addr
-      ; turns = R.create ~window:5 ~max_size:3 17
+      ; turns = R.create 17
       ; last_sync = 0.0
       ; redraw = Lwt_condition.create ()
       } in

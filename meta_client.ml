@@ -57,7 +57,7 @@ let rec loop ui current lst =
             begin try
               return @$
                 Some (List.find (fun { game_id; _ } -> game_id = id) !lst)
-            with Not_found -> LTerm_ui.draw ui end
+            with Not_found -> loop ui current lst end
         end
     | Key { code = Escape } ->
         return None

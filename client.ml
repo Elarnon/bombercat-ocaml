@@ -7,8 +7,8 @@ let meta = ref "127.0.0.1"
 let sfml = ref false
 
 let spec =
-  [ "--address", Arg.Set_int mport, " Address of the meta server [127.0.0.1]"
-  ; "--port", Arg.Set_string meta, " Port of the meta server [22222]"
+  [ "--address", Arg.Set_int mport, " Address of the game server [127.0.0.1]"
+  ; "--port", Arg.Set_string meta, " Port of the game server [22222]"
   ; "--sfml", Arg.Set sfml, " Use graphical client [false]"
   ]
 
