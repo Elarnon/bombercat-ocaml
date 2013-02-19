@@ -7,17 +7,17 @@ open Protocol.Game
 
 let cat = new texture
   ~rect:({ left = 0; top = 0; width = 96; height = 128 })
-  (`File "animals.png")
+  (`File "images/animals.png")
 
 let tcrate = new texture
   ~rect:({left = 0; top = 0; width = 50; height = 50 })
-  (`File "crates.png")
+  (`File "images/crates.png")
 
-let tbg = new texture (`File "background.png")
+let tbg = new texture (`File "images/background.png")
 
-let bombs = new texture (`File "bombs.png")
+let bombs = new texture (`File "images/bombs.png")
 
-let boum n = new texture (`File ("explosion" ^ string_of_int n ^ ".png"))
+let boum n = new texture (`File ("images/explosion" ^ string_of_int n ^ ".png"))
 
 let boums = List.map boum [0; 1; 2; 3]
 
