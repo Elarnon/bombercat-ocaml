@@ -10,7 +10,7 @@ let spec =
   ; "--meta", Arg.Set_string meta, "The address of the meta server."
   ]
 
-let ip = ref "0.0.0.0"
+let ip = ref "127.0.0.1"
 
 let anon s =
   ip := s
