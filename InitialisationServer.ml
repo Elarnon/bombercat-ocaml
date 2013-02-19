@@ -23,10 +23,13 @@ type state =
   ; params : params
   (* All registered players *)
   ; players : (string, string * char) Hashtbl.t
+  (* Starting time *)
   ; mutable starting : (Unix.tm * int) option
   (* Called on game update *)
   ; updated : unit Lwt_condition.t
-  ; meta : Meta.Client.Connection.t
+  (* Connection to the meta server *)
+  ; meta : MetaClient.Connection.t
+  (* Game parameters *)
   ; game : Protocol.Meta.game
   }
 
@@ -49,9 +52,11 @@ let nb_players { players; _ } = Hashtbl.length players
 let max_players { map ; _ } = Data.map_nb_players map
 
 (* Treat message as authentified user [cid] in state [state] *)
-let treat_message cid state = function
+let treat_message cid _state = function
   | HELLO _ ->
       (Some cid, [REJECTED "There can be only one user per connection."])
+  | SPECTATOR _ -> (* TODO *)
+      (Some cid, [REJECTED "You are already a player, fool."])
 
 (* Treat end of connection as authentified user [cid] in state [state] *)
 let treat_end cid state () =
@@ -75,6 +80,8 @@ let treat_end cid state () =
 exception Found of char
 
 let treat_anonymous_message state = function
+  | SPECTATOR _pseudo -> (* TODO *)
+      (None, [REJECTED ("Spectators are not supported by this server.")])
   | HELLO (pseudo, versions) ->
       (* Protocol check *)
       if not (List.mem 1 versions) then 
@@ -145,7 +152,7 @@ let treat state stream =
         startings
     in let quits =
        Hashtbl.fold
-        (fun id (pseudo, pos) l ->
+        (fun id _ l ->
           if not (Hashtbl.mem state.players id) then
             `Quit id :: l
           else l)
@@ -183,15 +190,15 @@ let rec handle_server server state =
   let cur_players = nb_players state in
   Lwt_condition.wait state.updated >>
   if nb_players state <> cur_players then
-    Meta.Client.update
+    MetaClient.update
       state.meta
       ~id:state.game.Protocol.Meta.game_id
       ~nb_players:(nb_players state);
   if nb_players state = max_players state then begin
     (* Ready to start ! *)
     Lwt_io.shutdown_server server;
-    Meta.Client.delete state.meta ~id:state.game.Protocol.Meta.game_id;
-    Meta.Client.Connection.close state.meta;
+    MetaClient.delete state.meta ~id:state.game.Protocol.Meta.game_id;
+    MetaClient.Connection.close state.meta;
     let (nanof, datef) = modf (Unix.gettimeofday ()) in
     let date = Unix.gmtime datef in
     let nano = int_of_float (nanof *. 10000.) in
@@ -211,7 +218,7 @@ let create addr meta =
   (* Load the world *)
   Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
   let map = Data.map_of_string s in
-  Meta.Client.add meta ~addr ~name:"CATSERV"
+  MetaClient.add meta ~addr ~name:"CATSERV"
     ~nb_players:(Data.map_nb_players map) >>= function
       | None -> return_none
       | Some game ->
@@ -228,6 +235,6 @@ let create addr meta =
           let state = mk_state map params meta game in
           let server = Connection.establish_server
             addr
-            (fun client stream -> treat state stream)
+            (fun _client stream -> treat state stream)
           in handle_server server state >|= fun x -> Some x
 ) ()

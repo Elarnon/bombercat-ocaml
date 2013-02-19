@@ -16,16 +16,16 @@ let anon _ = ()
 let usage = "usage: " ^ Sys.argv.(0) ^ " [--port <meta port>] "
             ^ "[--address <meta address>]"
 
-let left_key lst key =
+let id_before lst key =
   List.fold_left
     (fun acc { game_id; _ } ->
       if key = None || Some game_id < key then
         Some game_id
-      else None)
+      else acc)
     None
     lst
 
-let right_key lst key =
+let id_after lst key =
   let module X = struct exception Found of int end in
   try 
     List.iter
@@ -38,19 +38,19 @@ let rec loop ui current lst =
   let open LTerm_event in
   let open LTerm_key in
   LTerm_ui.wait ui >>= function
-    | Key { code = Up } ->
-        begin match left_key !lst !current with
+    | Key { code = Up; _ } ->
+        begin match id_before !lst !current with
         | None -> ()
         | Some k -> current := Some k end;
         LTerm_ui.draw ui;
         loop ui current lst
-    | Key { code = Down } ->
-        begin match right_key !lst !current with
+    | Key { code = Down; _ } ->
+        begin match id_after !lst !current with
         | None -> ()
         | Some k -> current := Some k end;
         LTerm_ui.draw ui;
         loop ui current lst
-    | Key { code = Enter } ->
+    | Key { code = Enter; _ } ->
         begin match !current with
         | None -> loop ui current lst
         | Some id ->
@@ -59,9 +59,9 @@ let rec loop ui current lst =
                 Some (List.find (fun { game_id; _ } -> game_id = id) !lst)
             with Not_found -> loop ui current lst end
         end
-    | Key { code = Escape } ->
+    | Key { code = Escape; _ } ->
         return None
-    | ev -> loop ui current lst
+    | _ev -> loop ui current lst
 
 let draw current games ui matrix =
   let module D = LTerm_draw in
@@ -107,13 +107,13 @@ let _ = Lwt_main.run begin Lwt_unix.handle_unix_error (fun () ->
   (* TODO: catch Not_found *)
   try_lwt
     lwt addr = Network.mk_addr ~port:!port !address in
-    lwt co = Meta.Client.Connection.open_connection addr in
+    lwt co = MetaClient.Connection.open_connection addr in
     lwt term = Lazy.force LTerm.stdout in
 
     let current = ref None in
     let games = ref [] in
     let rec update_games ui =
-      Meta.Client.list_games co >>= function
+      MetaClient.list_games co >>= function
         | None -> return None
         | Some gs ->
             games :=
@@ -132,7 +132,7 @@ let _ = Lwt_main.run begin Lwt_unix.handle_unix_error (fun () ->
         LTerm_ui.quit ui
     in match game with
     | None -> return ()
-    | Some game -> return () (* start game *)
+    | Some _game -> return () (* start game, TODO *)
   with Not_found ->
     Lwt_log.fatal "Unable to connect to the server." >> exit 2
 ) () end

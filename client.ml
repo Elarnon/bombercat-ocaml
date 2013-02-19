@@ -52,6 +52,9 @@ let _ =
                       Hashtbl.replace players ident (pseudo, map_id);
                       Lwt_log.debug "JOIN" >>
                       loop ()
+                  | Some (`Spectator _) ->
+                      (* We don't care about spectators *)
+                      loop ()
                   | Some (`Quit ident) ->
                       Hashtbl.remove players ident;
                       Lwt_log.debug "QUIT" >>

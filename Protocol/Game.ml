@@ -1,7 +1,4 @@
-open Lwt
-open Network
 open Misc
-open Bencode
 open Data
 
 exception Error of string

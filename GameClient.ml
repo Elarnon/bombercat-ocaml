@@ -20,7 +20,6 @@ type t =
   ; server : Network.addr
   ; turns : Protocol.Game.server R.t
   ; mutable last_sync : float
-  ; redraw : int Lwt_condition.t
   }
 
 let resync t =
@@ -98,7 +97,6 @@ let rec update_map t =
     | X.Win winner -> return (Some winner) end
 
 let main dcreate addr map params players ident =
-  let open Initialisation in
   let map_id = snd @$ Hashtbl.find players ident in
   lwt display = dcreate map params map_id in
   let t =
@@ -116,7 +114,6 @@ let main dcreate addr map params players ident =
     ; server = addr
     ; turns = R.create 17
     ; last_sync = 0.0
-    ; redraw = Lwt_condition.create ()
     } in
   Display.update display 0;
   resync t;

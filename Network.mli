@@ -64,6 +64,8 @@ module UDP : sig
 
   val create : ?addr:addr -> unit -> t
 
+  val close : t -> unit Lwt.t
+
   val sendto : t -> string -> addr -> bool
 
   val recvfrom : t -> (string * addr) option Lwt.t

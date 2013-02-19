@@ -48,11 +48,13 @@ module Initialisation : sig
 
   type client =
     | HELLO of string * int list
+    | SPECTATOR of string
 
   type server =
     | REJECTED of string
     | OK of string * Data.map * params
     | JOIN of string * string * char
+    | SPECTATORJOIN of string * string
     | START of Unix.tm * int
     | QUIT of string
 

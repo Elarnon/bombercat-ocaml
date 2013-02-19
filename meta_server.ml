@@ -26,14 +26,14 @@ let _ =
     Lwt_unix.handle_unix_error (fun () ->
       try_lwt
         lwt meta_addr = Network.mk_addr ~port:!port !ip in
-        let meta_server = Meta.Server.create meta_addr in
+        let meta_server = MetaServer.create meta_addr in
         let stream = Lwt_io.read_chars Lwt_io.stdin in
         let rec eat () =
           Lwt_stream.get stream >>= function
             | Some _ -> eat ()
             | None -> return ()
         in eat () >>= fun () ->
-        Meta.Server.shutdown meta_server;
+        MetaServer.shutdown meta_server;
         return_unit
       with Not_found -> Lwt_log.fatal (!ip ^ ": Invalid address") >> exit 2)
       ()

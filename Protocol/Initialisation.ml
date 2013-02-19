@@ -1,8 +1,6 @@
 open Lwt
-open Network
 open Misc
 open Bencode
-open Data
 
 exception Error of string
 
@@ -66,20 +64,24 @@ let bdecode_params = let open Bencode in function
 
 type client = 
   | HELLO of string * int list
+  | SPECTATOR of string
 
 type server =
   | REJECTED of string
   | OK of string * Data.map * params
   | JOIN of string * string * char
+  | SPECTATORJOIN of string * string
   | START of Unix.tm * int
   | QUIT of string
 
 let bencode_client = let open Bencode in function
   | HELLO (pseudo, versions) ->
       L [ S "HELLO"; S pseudo; L (List.map (fun i -> I i) versions) ]
+  | SPECTATOR pseudo ->
+      L [ S "SPECTATOR"; S pseudo ]
 
 let bdecode_client = let open Bencode in function
-  | L [ S "HELLO"; S pseudo; L bversions ] ->
+  | L ( S "HELLO" :: S pseudo :: L bversions :: _ ) ->
       let versions =
         Lwt_list.map_p
           (function
@@ -87,6 +89,8 @@ let bdecode_client = let open Bencode in function
             | _ -> fail (Error "bdecode_client"))
           bversions
       in versions >>= fun v -> return @$ HELLO (pseudo, v)
+  | L ( S "SPECTATOR" :: S pseudo :: _ ) ->
+      return @$ SPECTATOR pseudo
   | _ -> fail (Error "bdecode_client")
 
 let bencode_server = let open Bencode in function
@@ -95,6 +99,8 @@ let bencode_server = let open Bencode in function
       L [ S "OK"; S id; S (Data.string_of_map map); bencode_params params ]
   | JOIN (pseudo, id, pos) ->
       L [ S "JOIN"; S pseudo; S id; S (String.make 1 pos) ]
+  | SPECTATORJOIN (pseudo, id) ->
+      L [ S "SPECTATORJOIN"; S pseudo; S id ]
   | START (date, nano) ->
       let open Unix in
       let { tm_sec ; tm_min ; tm_hour ; tm_mday ; tm_mon ; tm_year ; _ } =
@@ -107,14 +113,16 @@ let bencode_server = let open Bencode in function
       L [ S "QUIT"; S ident ]
 
 let bdecode_server = let open Bencode in function
-  | L [ S "REJECTED"; S reason ] -> return @$ REJECTED reason
-  | L [ S "OK"; S id; S smap; bparams ] ->
+  | L ( S "REJECTED" :: S reason :: _ ) -> return @$ REJECTED reason
+  | L ( S "OK" :: S id :: S smap :: bparams :: _ ) ->
       bdecode_params bparams >>= fun p ->
       return @$ OK (id, Data.map_of_string smap, p)
-  | L [ S "JOIN"; S pseudo; S id; S pos ] (* when *) ->
-    (* String.length pos = 1 && pos.[0] >= 'A' && pos.[0] <= 'Z' -> *)
+  | L ( S "JOIN" :: S pseudo :: S id :: S pos :: _ ) when
+      String.length pos = 1 && pos.[0] >= 'A' && pos.[0] <= 'Z' ->
       return @$ JOIN (pseudo, id, pos.[0])
-  | L [ S "START"; S strdate ] ->
+  | L ( S "SPECTATORJOIN" :: S pseudo :: S id :: _ ) ->
+      return @$ SPECTATORJOIN (pseudo, id)
+  | L ( S "START" :: S strdate :: _ ) ->
       let open Unix in
       begin try
         return @$
@@ -125,7 +133,7 @@ let bdecode_server = let open Bencode in function
             tm_isdst = false } in
             START (snd (Unix.mktime raw), nano))
       with Scanf.Scan_failure _ -> fail (Error "bdecode_server start date") end
-  | L [ S "QUIT"; S ident ] ->
+  | L ( S "QUIT" :: S ident :: _ ) ->
       return @$ QUIT ident
   | _ -> fail (Error "bdecode_server")
 

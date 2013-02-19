@@ -44,10 +44,10 @@ let is_player { players; _ } id = Hashtbl.mem players id
 
 let id_of_map { reverse; _ } mid = Hashtbl.find reverse mid
 
-let check_author pi id from =
+let check_author pi from =
   Some from = pi.pi_author
 
-let validate_author pi id from =
+let validate_author pi from =
   match pi.pi_author with
   | Some author when author = from -> true
   | Some _ -> false
@@ -57,7 +57,8 @@ let treat_message ({ map; players; _ } as st) from = function
   | COMMAND (id, seq, rej, msg) ->
       begin try
         let pi = Hashtbl.find players id in
-        if rej = pi.pi_reject && is_player st id && check_author pi id from
+        (* TODO: verify that a rogue player can't forge commands *)
+        if rej = pi.pi_reject && is_player st id && check_author pi from
         then
           let pos = match msg with | BOMB p | MOVE (p, _) -> p in
           if Data.is_pos_valid map pos then
@@ -75,7 +76,7 @@ let treat_message ({ map; players; _ } as st) from = function
           Hashtbl.iter (fun k _ -> s := !s ^ ", " ^ k) players;
           Lwt_log.debug ("Valid players: " ^ !s));
         let pi = Hashtbl.find players id in
-        if turn_is_past st turn && is_player st id && validate_author pi id from
+        if turn_is_past st turn && is_player st id && validate_author pi from
         then begin
           Lwt.async (fun () -> Lwt_log.debug "SYNC treated");
           let plogs = discard turn @$ st.logs in

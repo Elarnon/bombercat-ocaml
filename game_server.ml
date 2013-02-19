@@ -29,7 +29,7 @@ let _ =
     try_lwt
       Network.mk_addr ~port:!mport !meta >>= fun meta_addr ->
       Network.mk_addr ~port:!port !ip >>= fun init_addr ->
-      Meta.Client.Connection.open_connection meta_addr >>= fun meta ->
+      MetaClient.Connection.open_connection meta_addr >>= fun meta ->
       Initialisation.Server.create init_addr meta >>= function
         | None -> return_unit
         | Some game ->

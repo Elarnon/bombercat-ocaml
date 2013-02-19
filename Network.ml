@@ -100,22 +100,21 @@ module TCP = struct
     type output = Chan.output
     type client = int
     type t =
-      Lwt_io.input_channel * Lwt_io.output_channel *
-      (unit -> unit Lwt.t) list ref
+      Lwt_io.input_channel * Lwt_io.output_channel
 
-    let send (_, output, _) v =
+    let send (_, output) v =
       Lwt.async (fun () ->
         Lwt_io.atomic (fun chan ->
           Lwt_io.write_chars chan (Chan.stream_of_output v)) output
       )
 
-    let close (inp, outp, l) =
+    let close (inp, outp) =
       Lwt.async (fun () ->
         Lwt_io.close outp >>
         Lwt_io.close inp
       )
 
-    let recv ((input, _, _) as t) =
+    let recv ((input, _) as t) =
       try_lwt
         Chan.input_of_stream (Lwt_io.read_chars input)
       with
@@ -123,7 +122,7 @@ module TCP = struct
 
     let open_connection addr =
       Lwt_io.open_connection addr >>= fun (inp, outp) ->
-      return (inp, outp, ref [])
+      return (inp, outp)
 
     let establish_server
       ?(close=fun _ -> ())
@@ -179,7 +178,7 @@ module UDP = struct
         true
     end
 
-  let rec recvfrom fdescr =
+  let recvfrom fdescr =
     (* We have to make a new buffer each time because there are potentially
      * multiple instances of [recvfrom] running in parallel *)
     let buffer = String.make 65536 ' ' in

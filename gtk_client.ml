@@ -93,10 +93,10 @@ let () = Lwt_main.run (
   let box = GPack.vbox ~homogeneous:false ~packing:window#add () in
 
   lwt addr = Network.mk_addr ~port:!mport !ip in
-  lwt co = Meta.Client.Connection.open_connection addr in
+  lwt co = MetaClient.Connection.open_connection addr in
   let rec poll () =
     Lwt_unix.sleep 1.0 >>= fun () ->
-    Meta.Client.list_games co >>= function
+    MetaClient.list_games co >>= function
     | None -> window#destroy (); return ()
     | Some games -> update games; poll ()
   in

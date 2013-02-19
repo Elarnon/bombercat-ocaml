@@ -63,7 +63,7 @@ module StringCharStream = struct
     try Some str.[!pos]
     with Invalid_argument _ -> None
 
-  let junk (str, pos) =
+  let junk (_, pos) =
     pos := !pos + 1
 
   let next s =
@@ -182,7 +182,7 @@ module Make(S : CharStream) = struct
   and read_bdict s map last =
     S.peek s >>= function
       | Some 'e' -> S.junk s >>= fun () -> return map
-      | Some c ->
+      | Some _ ->
           read_bstring s >>= fun key ->
           if Some key <= last then
             fail (Format_error "Illegal key order in bencoded dictionary.")

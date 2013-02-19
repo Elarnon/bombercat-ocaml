@@ -7,6 +7,7 @@ module Connection = Network.TCP.Make(Protocol.Initialisation.Client)
 type event =
   [ `Start of Unix.tm * int
   | `Join of string * string * char
+  | `Spectator of string * string
   | `Quit of string
   | `Closed ]
 
@@ -28,6 +29,8 @@ let connect addr =
           push @$ Some (`Start (date, nano)); loop ()
       | Some (JOIN (pseudo, id, pos)) ->
           push @$ Some (`Join (pseudo, id, pos)); loop ()
+      | Some (SPECTATORJOIN (pseudo, id)) ->
+          push @$ Some (`Spectator (pseudo, id)); loop ()
       | Some (QUIT id) ->
           push @$ Some (`Quit id); loop ()
   in
@@ -37,6 +40,11 @@ let connect addr =
 let hello (srv, mut, _, stream) ~pseudo ~versions =
   Lwt_mutex.with_lock mut (fun () ->
     Connection.send srv (HELLO (pseudo, versions));
+    Lwt_stream.get stream)
+
+let spectator (srv, mut, _, stream) ~pseudo =
+  Lwt_mutex.with_lock mut (fun () ->
+    Connection.send srv (SPECTATOR pseudo);
     Lwt_stream.get stream)
 
 let poll (_, _, stream, _) = Lwt_stream.get stream

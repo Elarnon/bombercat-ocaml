@@ -1,6 +1,3 @@
-open Lwt
-open CamomileLibrary
-
 type case =
   | Empty
   | Destructible
@@ -40,8 +37,6 @@ let map_choose { players; _ } =
 
 let map_nb_players map = Hashtbl.length map.players
 
-let players { players ; _ } = players
-
 let width { width; _ } = width
 
 let height { height; _ } = height
@@ -72,10 +67,6 @@ let map_add_player map (x, y) player =
 let map_rm_player map (x, y) player =
   let v, l = map.content.(x).(y) in
   map.content.(x).(y) <- v, List.filter (fun c -> c <> player) l
-
-let map_clean_players map (x, y) =
-  let v, _ = map.content.(x).(y) in
-  map.content.(x).(y) <- v, []
 
 let (++>) (x, y) = function
   | Left -> (x - 1, y)
@@ -129,10 +120,10 @@ let try_move map player pos dir =
           true
         end else false
 
-let can_bomb map player ((x, y) as pos) =
+let can_bomb map player pos =
   check_pos map player pos && is_free_for_bomb map pos
 
-let try_bomb map player ((x, y) as pos) timer dist =
+let try_bomb map player pos timer dist =
   if can_bomb map player pos then begin
     let node = Lwt_sequence.add_r pos map.bombs in
     map_set map pos (`Bomb (timer, dist, node));
@@ -229,7 +220,7 @@ let map_of_string s =
         nb_players := !nb_players + 1
     | '\n' -> w := max !w !x; x := -1; y := !y + 1
     | ' ' -> ()
-    | c ->
+    | _ ->
         raise InvalidMap
     end;
     x := !x + 1;
@@ -249,7 +240,7 @@ let map_of_string s =
     end) !players;
   map
 
-let string_of_map { width; height; content; players } =
+let string_of_map { width; height; content; players; _ } =
   let size = (width + 1) * height in
   let s = String.make size ' ' in
   let put x y v = s.[y * (width + 1) + x] <- v in

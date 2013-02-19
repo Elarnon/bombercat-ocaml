@@ -1,8 +1,6 @@
 open Lwt
 open Network
 open Misc
-open Bencode
-open Data
 
 exception Error of string
 
@@ -17,8 +15,6 @@ let read_stream decoder catcher s =
             | None -> return_none
         with
           | exn -> catcher exn >> return None
-
-
 
 type client =
   | ADD of addr * string * int
@@ -84,7 +80,7 @@ let decode_client = let open Bencode in function
   | L ( S "DELETE" :: I game_id :: _ ) ->
       return (DELETE game_id)
   | S "LIST" -> return LIST
-  | v ->
+  | _v ->
       fail (Error "Invalid message from Protocol.Meta client.")
 
 let bencode_game g =
