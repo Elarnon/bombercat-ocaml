@@ -38,15 +38,15 @@ let _ =
       Lwt_unix.handle_unix_error (fun () ->
         try_lwt
           Network.mk_addr ~port:!port !addr >>= fun init_addr ->
-          lwt co = Initialisation.Client.connect init_addr in
-          lwt res = Initialisation.Client.hello co ~pseudo ~versions:[1] in
+          lwt co = InitialisationClient.connect init_addr in
+          lwt res = InitialisationClient.hello co ~pseudo ~versions:[1] in
           match res with
           | None -> return ()
           | Some (`Rejected reason) -> Lwt_log.error reason
           | Some (`Ok (ident, map, params)) ->
               let players = Hashtbl.create 17 in
               let rec loop () =
-                Initialisation.Client.poll co >>= function
+                InitialisationClient.poll co >>= function
                   | None -> return ()
                   | Some (`Join (pseudo, ident, map_id)) ->
                       Hashtbl.replace players ident (pseudo, map_id);

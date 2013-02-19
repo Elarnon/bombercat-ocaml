@@ -167,7 +167,7 @@ let rec loop server =
   if server.ended then return () else loop server
 
 let main addr game =
-  let open Initialisation.Server in
+  let open InitialisationServer in
   let players = Hashtbl.create 17 in
   let reverse = Hashtbl.create 17 in
   Hashtbl.iter (fun id (pseudo, map_id) ->
