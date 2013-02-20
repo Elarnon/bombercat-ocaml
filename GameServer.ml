@@ -31,14 +31,6 @@ let max_size = 2
 (* Turn checking *)
 let turn_is_past { turn; _ } t = t >= 0 && t < turn
 
-let turn_is_current { turn; _ } t = t = turn
-
-let turn_is_next { params; turn; _ } t =
-  t < params.p_game_time && t = turn + 1
-
-let turn_is_future { params; turn; _ } t =
-  t >= turn && t < params.p_game_time
-
 (* Player checking *)
 let is_player { players; _ } id = Hashtbl.mem players id
 

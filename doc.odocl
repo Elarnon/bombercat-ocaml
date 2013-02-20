@@ -7,3 +7,7 @@ InitialisationServer
 Protocol
 Reorderable
 Misc
+Data
+GameClient
+GameServer
+Network
