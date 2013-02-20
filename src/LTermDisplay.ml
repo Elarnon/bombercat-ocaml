@@ -5,12 +5,15 @@ open Protocol.Meta
 open CamomileLibrary
 open LTerm_geom
 
+let data = ref None
+
 module Meta = struct
   type t =
     { m_ui : LTerm_ui.t
     ; m_games : Protocol.Meta.game list ref
     ; m_looping : Protocol.Meta.game option Lwt.t
     ; m_errors : string Queue.t
+    ; mutable m_freed : bool
     }
 
   let id_before lst key =
@@ -125,7 +128,10 @@ module Meta = struct
                 { row1 = row + 3; row2 = row + 4; col1 = col / 2; col2 = col }
         in D.draw_string_aligned quit_ctx 0 H_align_center "QUIT"
 
-  let create () =
+  let init () =
+    if !data <> None then
+      raise Display.Device_in_use
+    else
     lwt term = Lazy.force LTerm.stdout in
     let current = ref None in
     let games = ref [] in
@@ -133,32 +139,44 @@ module Meta = struct
     let e = ref None in
     lwt ui =
       LTerm_ui.create term (fun ui m -> draw e errors !current !games ui m) in
+    data := Some ui;
     return
       { m_games = games
       ; m_looping = loop ui current games
       ; m_ui = ui
-      ; m_errors = errors }
+      ; m_errors = errors
+      ; m_freed = false }
 
-  let update { m_games; m_ui; _ } games =
+  let check = function
+    | true -> fail Display.Invalid_resource
+    | false -> return_unit
+
+  let update { m_games; m_ui; m_freed; _ } games =
+    if m_freed then raise Display.Invalid_resource;
     m_games := 
       List.sort
         (fun { game_id; _ } { game_id = id; _ } -> compare game_id id)
         games;
     LTerm_ui.draw m_ui
 
-  let error { m_errors; m_ui; _ } error =
+  let error { m_freed; m_errors; m_ui; _ } error =
+    if m_freed then raise Display.Invalid_resource;
     Queue.add error m_errors;
     LTerm_ui.draw m_ui
 
-  let input { m_looping; _ } =
+  let input { m_looping; m_freed; _ } =
+    check m_freed >>
     m_looping
 
-  let quit { m_ui; _ } =
+  let free ({ m_ui; _ } as t) =
+    check t.m_freed >>= fun () ->
+    data := None;
+    t.m_freed <- true;
     LTerm_ui.quit m_ui
 end
 
 module Init = struct
-  type t = LTerm_ui.t
+  type t = LTerm_ui.t * bool ref
 
   let draw ui matrix =
     let module Ui = LTerm_ui in
@@ -171,25 +189,31 @@ module Init = struct
     Draw.draw_string_aligned ctx middle H_align_center
       "Initializing game… Please wait."
 
-  let create ?meta _game =
-    begin match meta with
-    | None -> return ()
-    | Some m -> Meta.quit m end >>
-    lwt term = Lazy.force LTerm.stdout in
-    lwt ui = LTerm_ui.create term draw in
-    LTerm_ui.draw ui;
-    return ui
+  let init _game =
+    if !data <> None then fail Display.Device_in_use else begin
+      lwt term = Lazy.force LTerm.stdout in
+      lwt ui = LTerm_ui.create term draw in
+      data := Some ui;
+      LTerm_ui.draw ui;
+      return (ui, ref false)
+    end
 
-  let rec input ui =
+  let rec input (ui, freed) =
+    if !freed then fail Display.Invalid_resource else
     let open LTerm_event in
     let open LTerm_key in
     match_lwt LTerm_ui.wait ui with
     | Key { code = Escape; _ } ->
         return ()
-    | _ev -> input ui
+    | _ev ->
+        input (ui, freed)
 
-  let quit ui =
-    LTerm_ui.quit ui
+  let free (ui, freed) =
+    if !freed then fail Display.Invalid_resource else begin
+      data := None;
+      freed := true;
+      LTerm_ui.quit ui
+    end
 end
 
 module Game = struct
@@ -199,6 +223,7 @@ module Game = struct
     ; map_id : char
     ; ui : LTerm_ui.t
     ; current : int ref
+    ; freed : bool ref
     }
 
   let draw map time id turn ui matrix =
@@ -238,27 +263,30 @@ module Game = struct
     Draw.draw_string ctx 0 0 (Format.sprintf "Tour %4i/%4i" !turn time)
 
 
-  let create ?init players map time idme =
-    begin match init with
-    | None -> return ()
-    | Some i -> Init.quit i end >>
-    (* TODO catch Not_found *)
-    let me = snd @$ Hashtbl.find players idme in
-    lwt term = Lazy.force LTerm.stdout in
-    let current = ref 0 in
-    lwt ui = LTerm_ui.create term (draw map time me current) in
-    LTerm_ui.set_cursor_visible ui true;
-    return { map
-    ; map_id = me
-    ; ui
-    ; current
-    }
+  let init players map time idme =
+    if !data <> None then fail Display.Device_in_use else begin
+      (* TODO catch Not_found *)
+      let me = snd @$ Hashtbl.find players idme in
+      lwt term = Lazy.force LTerm.stdout in
+      let current = ref 0 in
+      lwt ui = LTerm_ui.create term (draw map time me current) in
+      data := Some ui;
+      LTerm_ui.set_cursor_visible ui true;
+      return { map
+      ; map_id = me
+      ; ui
+      ; current
+      ; freed = ref false
+      }
+    end
 
-  let update { ui; current; _ } turn =
+  let update { freed; ui; current; _ } turn =
+    if !freed then raise Display.Invalid_resource;
     current := turn;
     LTerm_ui.draw ui
 
-  let rec input ({ map; map_id; ui; _ } as t) =
+  let rec input ({ freed; map; map_id; ui; _ } as t) =
+    if !freed then fail Display.Invalid_resource else
     let open LTerm_key in
     let open LTerm_event in
     LTerm_ui.wait ui >>= fun evt ->
@@ -283,7 +311,16 @@ module Game = struct
       | _ ->
           input t
 
-  let quit { ui; _ } =
-    LTerm_ui.quit ui
+  let free { freed; ui; _ } =
+    if !freed then fail Display.Invalid_resource else begin
+      data := None;
+      freed := true;
+      LTerm_ui.quit ui
+    end
 
 end
+
+let quit () =
+  match !data with
+  | None -> return_unit
+  | Some ui -> LTerm_ui.quit ui

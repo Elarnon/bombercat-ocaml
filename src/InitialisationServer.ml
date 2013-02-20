@@ -13,24 +13,24 @@ type game =
 module Connection = Network.TCP.Make(Protocol.Initialisation.Server)
 
 type state =
-  (* Identifier sequence to make them unique *)
   { mutable next_id : int
-  (* Set of available characters on the map *)
+  (* Identifier sequence to make them unique *)
   ; available : (char, unit) Hashtbl.t
-  (* The world map *)
+  (* Set of available characters on the map *)
   ; map : Data.map
-  (* Game parameters *)
+  (* The world map *)
   ; params : params
-  (* All registered players *)
-  ; players : (string, string * char) Hashtbl.t
-  (* Starting time *)
-  ; mutable starting : (Unix.tm * int) option
-  (* Called on game update *)
-  ; updated : unit Lwt_condition.t
-  (* Connection to the meta server *)
-  ; meta : MetaClient.Connection.t
   (* Game parameters *)
+  ; players : (string, string * char) Hashtbl.t
+  (* All registered players *)
+  ; mutable starting : (Unix.tm * int) option
+  (* Starting time *)
+  ; updated : unit Lwt_condition.t
+  (* Called on game update *)
+  ; meta : MetaClient.Connection.t
+  (* Connection to the meta server *)
   ; game : Protocol.Meta.game
+  (* Game parameters *)
   }
 
 let mk_state map params meta game =
@@ -116,18 +116,11 @@ let treat_anonymous_message state = function
           Hashtbl.remove state.available c;
           let s = string_of_int state.next_id in
           state.next_id <- state.next_id + 1;
-          (* Get JOIN to send back from other players. Should be useless now,
-           * investigate (TODO). *)
-          (* let joins = Hashtbl.fold
-            (fun o_id (o_pseudo, o_pos) l ->
-              JOIN (o_pseudo, o_id, o_pos) :: l)
-            state.players [] in *)
-          let joins = [] in
           Hashtbl.add state.players s (pseudo, c);
           (* Broadcast join message *)
           Lwt_condition.broadcast state.updated ();
           (* Send messages *)
-          (Some s, (OK (s, state.map, state.params) :: joins))
+          (Some s, [OK (s, state.map, state.params)])
         end
 
 let treat state stream =
@@ -213,10 +206,10 @@ let rec handle_server server state =
   end else
     handle_server server state
 
-let create addr meta =
+let run addr meta =
   Unix.handle_unix_error (fun () ->
   (* Load the world *)
-  Lwt_stream.to_string (Lwt_io.chars_of_file "world") >>= fun s ->
+  Lwt_stream.to_string (Lwt_io.chars_of_file "data/world") >>= fun s ->
   let map = Data.map_of_string s in
   MetaClient.add meta ~addr ~name:"CATSERV"
     ~nb_players:(Data.map_nb_players map) >>= function

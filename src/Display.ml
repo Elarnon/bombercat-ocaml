@@ -1,10 +1,14 @@
 open Lwt
 
+exception Device_in_use
+
+exception Invalid_resource
+
 module type S = sig
   module Meta : sig
     type t
 
-    val create : unit -> t Lwt.t
+    val init : unit -> t Lwt.t
 
     val update : t -> Protocol.Meta.game list -> unit
 
@@ -12,31 +16,33 @@ module type S = sig
 
     val input : t -> Protocol.Meta.game option Lwt.t
 
-    val quit : t -> unit Lwt.t
+    val free : t -> unit Lwt.t
   end
 
   module Init : sig
     type t
 
-    val create : ?meta:Meta.t -> Protocol.Meta.game -> t Lwt.t
+    val init : Protocol.Meta.game -> t Lwt.t
 
     val input : t -> unit Lwt.t
 
-    val quit : t -> unit Lwt.t
+    val free : t -> unit Lwt.t
   end
 
   module Game : sig
     type t
 
-    val create : ?init:Init.t -> (string, string * char) Hashtbl.t -> Data.map ->
+    val init : (string, string * char) Hashtbl.t -> Data.map ->
     int -> string -> t Lwt.t
 
     val update : t -> int -> unit
 
     val input : t -> Protocol.Game.client_command option Lwt.t
 
-    val quit : t -> unit Lwt.t
+    val free : t -> unit Lwt.t
   end
+
+  val quit : unit -> unit Lwt.t
 end
 
 module type META = sig
@@ -57,9 +63,9 @@ end
 module Meta = struct
   type t = (module META)
 
-  let create d =
+  let init d =
     let module D = (val d : S) in
-    lwt x = D.Meta.create () in
+    lwt x = D.Meta.init () in
     return (module struct
       module D = D
       let x = x
@@ -77,56 +83,40 @@ module Meta = struct
     let module M = (val m : META) in
     M.D.Meta.input M.x
 
-  let quit m =
+  let free m =
     let module M = (val m : META) in
-    M.D.Meta.quit M.x
+    M.D.Meta.free M.x
 end
 
 module Init = struct 
   type t = (module INIT)
 
-  let create d game =
+  let init d game =
     let module D = (val d : S) in
-    lwt x = D.Init.create game in
+    lwt x = D.Init.init game in
     return (module struct
       module D = D
       let x = x
-    end : INIT)
-
-  let of_meta m game =
-    let module M = (val m : META) in
-    lwt init = M.D.Init.create ~meta:M.x game in
-    return (module struct
-      module D = M.D
-      let x = init
     end : INIT)
 
   let input i =
     let module I = (val i : INIT) in
     I.D.Init.input I.x
 
-  let quit i =
+  let free i =
     let module I = (val i : INIT) in
-    I.D.Init.quit I.x
+    I.D.Init.free I.x
 end
 
 module Game = struct
   type t = (module GAME)
 
-  let create d h m t i =
+  let init d h m t i =
     let module D = (val d : S) in
-    lwt x = D.Game.create h m t i in
+    lwt x = D.Game.init h m t i in
     return (module struct
       module D = D
       let x = x
-    end : GAME)
-
-  let of_init i h m t id =
-    let module I = (val i : INIT) in
-    lwt gmod = I.D.Game.create ~init:I.x h m t id in
-    return (module struct
-      module D = I.D
-      let x = gmod
     end : GAME)
 
   let update g =
@@ -137,7 +127,11 @@ module Game = struct
     let module G = (val g : GAME) in
     G.D.Game.input G.x
 
-  let quit g =
+  let free g =
     let module G = (val g : GAME) in
-    G.D.Game.quit G.x
+    G.D.Game.free G.x
 end
+
+let quit d =
+  let module D = (val d : S) in
+  D.quit ()

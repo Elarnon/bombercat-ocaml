@@ -48,30 +48,30 @@ let poll (_, _, stream, _) = Lwt_stream.get stream
 
 let init display msg addr =
   lwt co = connect addr in
-  let res = Lwt.pick [ Display.Init.input display >> return_none
-                     ; send_and_wait co msg ] in
-  match_lwt res with
-  | None -> return Closed
-  | Some (`Rejected reason) -> return (Rejected reason)
-  | Some (`Ok (ident, map, params)) ->
-      let players = Hashtbl.create 17 in
-      let spectators = Hashtbl.create 17 in
-      let rec loop () =
-        match_lwt poll co with
-        | None -> return Closed
-        | Some (`Join (pseudo, ident, map_id)) ->
-            Hashtbl.replace players ident (pseudo, map_id);
-            loop ()
-        | Some (`Spectator (pseudo, ident)) ->
-            Hashtbl.replace spectators ident pseudo;
-            loop ()
-        | Some (`Quit ident) ->
-            Hashtbl.remove players ident;
-            Hashtbl.remove spectators ident;
-            loop ()
-        | Some (`Start start) ->
-            return @$ Ok { ident; map; params; players; spectators; start }
-      in loop ()
+  let init =
+    match_lwt send_and_wait co msg with
+    | None -> return Closed
+    | Some (`Rejected reason) -> return (Rejected reason)
+    | Some (`Ok (ident, map, params)) ->
+        let players = Hashtbl.create 17 in
+        let spectators = Hashtbl.create 17 in
+        let rec loop () =
+          match_lwt poll co with
+          | None -> return Closed
+          | Some (`Join (pseudo, ident, map_id)) ->
+              Hashtbl.replace players ident (pseudo, map_id);
+              loop ()
+          | Some (`Spectator (pseudo, ident)) ->
+              Hashtbl.replace spectators ident pseudo;
+              loop ()
+          | Some (`Quit ident) ->
+              Hashtbl.remove players ident;
+              Hashtbl.remove spectators ident;
+              loop ()
+          | Some (`Start start) ->
+              return @$ Ok { ident; map; params; players; spectators; start }
+        in loop ()
+  in Lwt.pick [ init; Display.Init.input display >> return Closed ]
 
 let hello display ~pseudo ?(versions=[1]) =
   init display (HELLO (pseudo, versions))

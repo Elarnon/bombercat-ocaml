@@ -22,6 +22,7 @@ let merge ?(quit=false) streams =
         else
           Lwt.nchoose_split !running >>= fun (ended', running') ->
           let end_now = ref false in
+          (* We remove *every* [None] in [ended'']... *)
           let ended'' = List.filter
                           (fun x ->
                              if fst x = None then begin
@@ -32,6 +33,7 @@ let merge ?(quit=false) streams =
             return None
           else begin
             let ended_ = List.map
+              (* Thus, we can NOT find them here. *)
               (function | (None, _) -> assert false
                         | (Some x, s) -> (x, s)) ended'' in
             ended := ended_; running := running'; step ()

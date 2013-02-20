@@ -285,6 +285,6 @@ let all_to_strings len lst =
     | [] -> List.rev acc
     | lst ->
         let packet, nb = most_to_string len lst in
-        if nb = 0 then failwith "all_to_strings" else
+        if nb = 0 then invalid_arg "all_to_strings" else
         trec (packet :: acc) (discard nb lst)
   in trec [] lst

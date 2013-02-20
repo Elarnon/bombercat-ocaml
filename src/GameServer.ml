@@ -34,7 +34,9 @@ let turn_is_past { turn; _ } t = t >= 0 && t < turn
 (* Player checking *)
 let is_player { players; _ } id = Hashtbl.mem players id
 
-let id_of_map { reverse; _ } mid = Hashtbl.find reverse mid
+let id_of_map { reverse; _ } mid =
+  try Some (Hashtbl.find reverse mid)
+  with Not_found -> None
 
 let check_author pi from =
   Some from = pi.pi_author
@@ -50,35 +52,45 @@ let treat_message ({ map; players; _ } as st) from = function
       begin try
         let pi = Hashtbl.find players id in
         (* TODO: verify that a rogue player can't forge commands *)
-        if rej = pi.pi_reject && is_player st id && check_author pi from
+        (* TODO: validate/check ? *)
+        if rej = pi.pi_reject && is_player st id && validate_author pi from
         then
           let pos = match msg with | BOMB p | MOVE (p, _) -> p in
           if Data.is_pos_valid map pos then
             if not (R.add pi.pi_commands seq (`Client msg)) then begin
+              Lwt_log.ign_debug ("Out of sync with client " ^ id);
               (* Out of sync! *)
               R.interrupt ~notify:(fun x -> `Nop x) pi.pi_commands;
               pi.pi_reject <- pi.pi_reject + 1
             end
-      with Not_found -> () end
+      with Not_found ->
+        Lwt_log.ign_debug ("Received message for unknown client " ^ id)
+      end
   | SYNC (id, turn) ->
       begin try
-        Lwt.async (fun () -> Lwt_log.debug ("SYNC received (" ^ id ^ ")"));
-        Lwt.async (fun () ->
-          let s = ref "" in
-          Hashtbl.iter (fun k _ -> s := !s ^ ", " ^ k) players;
-          Lwt_log.debug ("Valid players: " ^ !s));
         let pi = Hashtbl.find players id in
         if turn_is_past st turn && is_player st id && validate_author pi from
         then begin
-          Lwt.async (fun () -> Lwt_log.debug "SYNC treated");
+          Lwt_log.ign_debug
+            ("Treating SYNC from client " ^ id ^ " for turn " ^
+            string_of_int turn);
           let plogs = discard turn @$ st.logs in
           let strings = all_servers_to_strings ~nops:id plogs in
           List.iter (fun str ->
+            (* TODO: exn? *)
             ignore (Network.UDP.sendto st.socket str from)) strings;
-        end
-      with Not_found -> () end
+        end else
+          Lwt_log.ign_debug
+            ("Bad SYNC received from client " ^ id ^ " for turn "
+            ^string_of_int turn);
+      with Not_found ->
+        Lwt_log.ign_debug
+          ("Discarding SYNC from *invalid* client " ^ id ^ " for turn "
+          ^string_of_int turn)
+      end
 
 let rec treat_input game =
+  (* TODO: exn? *)
   Network.UDP.recvfrom game.socket >>= function
     | None -> return ()
     | Some (str, addr) ->
@@ -91,7 +103,7 @@ let run_turn st =
   if not st.ended && nb_players <= 1 then begin
     st.ended <- true;
     let winner = match Data.map_choose st.map with
-      | Some id -> Some (id_of_map st id)
+      | Some id -> id_of_map st id
       | None -> None
     in GAMEOVER (st.turn, { winner })
   end else
@@ -116,7 +128,9 @@ let run_turn st =
                 if Data.try_bomb st.map pid pos btime bdist then begin
                   bomb := true;
                   Stack.push (CLIENT (BOMB pos)) actions;
-                end (* else impossible to put bomb for some reason *)
+                end else
+                  Lwt_log.ign_debug
+                    ("Ignoring BOMB from player " ^ pi.pi_pseudo)
               end
           | `Client (MOVE (pos, dir)) ->
               if !move then (* A move has already been issued *)
@@ -127,7 +141,9 @@ let run_turn st =
                 if Data.try_move st.map pid pos dir then begin
                   move := true;
                   Stack.push (CLIENT (MOVE (pos, dir))) actions;
-                end (* else impossible to put bomb for some reason *)
+                end else
+                  Lwt_log.ign_debug
+                    ("Ignoring MOVE from player " ^ pi.pi_pseudo)
               end
           | `Nop s ->
               R.junk cmds;
@@ -135,8 +151,14 @@ let run_turn st =
         done with R.Empty | X.Break -> () end;
         Hashtbl.add tbl id actions)
       st.players;
-    List.iter (fun p -> Stack.push DEAD (Hashtbl.find tbl (id_of_map st p)))
-              (Data.decrease_timers st.map);
+    List.iter
+      (fun p ->
+        match id_of_map st p with
+        | Some id ->
+            begin try Stack.push DEAD (Hashtbl.find tbl id)
+            with Not_found -> assert false (* TODO *) end
+        | None -> Lwt_log.ign_debug "Death of phantom player")
+      (Data.decrease_timers st.map);
     let smap = Hashtbl.fold (fun k v -> Smap.add k (dump_stack v)) tbl Smap.empty
     in let res = TURN (st.turn, smap) in
     st.turn <- st.turn + 1;
@@ -152,13 +174,14 @@ let rec loop server =
       | None -> ()
       | Some addr ->
           let str, _ = most_servers_to_string ~nops:id last_logs in
+          (* TODO: exn? *)
           ignore (Network.UDP.sendto server.socket str addr)) server.players;
     return_unit
   in let ttime = float_of_int server.params.p_turn_time /. 1000. in
   Lwt.join [ Lwt_unix.sleep ttime; run () ] >>
   if server.ended then return () else loop server
 
-let main addr game =
+let run addr game =
   let open InitialisationServer in
   let players = Hashtbl.create 17 in
   let reverse = Hashtbl.create 17 in
@@ -171,6 +194,14 @@ let main addr game =
       ; pi_author = None
       ; pi_commands = R.create ~window ~max_size ()
       }) game.g_players;
+  let extra_players = ref [] in
+  Data.iter_players
+    (fun c p ->
+      if not (Hashtbl.mem reverse c) then
+        extra_players := c :: !extra_players)
+    game.g_map;
+  (* TODO: treat extra players *)
+  (* TODO: exn? *)
   let socket = Network.UDP.create ~addr () in
   let server =
     { params = game.g_params
@@ -184,5 +215,4 @@ let main addr game =
     } in
   let ttime = float_of_int server.params.p_turn_time /. 1000. in
   Lwt.async (fun () -> treat_input server);
-  (* Lwt.async (fun () -> Data.display server.map); *)
   Lwt_unix.sleep ttime >> loop server

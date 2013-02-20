@@ -4,6 +4,9 @@ type case =
   | Indestructible
   | Bomb of int
 
+(* Internally used in place of case to allow for internal treatment on
+ * explosions – it helps ensure that, when multiple explosions occur
+ * simultaneously, at no explosion "pass through" destructible cases. *)
 type variant =
   [ `Empty
   | `Destroying
@@ -11,9 +14,15 @@ type variant =
   | `Destructible
   | `Bomb of int * int * (int * int) Lwt_sequence.node ]
 
+exception InvalidMap
+
+exception Inconsistency of string
+
+(* Conversion from internal variants to exposed cases. *)
 let of_variant = function
   | `Empty -> Empty
-  | `Destroying -> assert false
+  | `Destroying ->
+      raise (Inconsistency "`Destroying in of_variant (outside of blast).")
   | `Indestructible -> Indestructible
   | `Destructible -> Destructible
   | `Bomb (timer, _, _) -> Bomb timer
@@ -26,8 +35,12 @@ type map =
   { width : int
   ; height : int
   ; content : (variant * char list) array array
+  (* On each case, there is the internal variant representing its type, as well
+   * as a list of players on this case. *)
   ; players : (char, (int * int)) Hashtbl.t
   ; bombs : (int * int) Lwt_sequence.t
+  (* This allows to easily walk through all bombs without searching through the
+   * whole map. *)
   }
 
 let map_choose { players; _ } =
@@ -60,14 +73,17 @@ let map_set map (x, y) v =
 let map_players map (x, y) =
   snd map.content.(x).(y)
 
+(* Internal add player on the map. Does *only* affect the content. *)
 let map_add_player map (x, y) player =
   let v, l = map.content.(x).(y) in
   map.content.(x).(y) <- v, player :: l
 
+(* Internal remove player. Does *only* affect the content. *)
 let map_rm_player map (x, y) player =
   let v, l = map.content.(x).(y) in
   map.content.(x).(y) <- v, List.filter (fun c -> c <> player) l
 
+(* Adds a direction to a position *)
 let (++>) (x, y) = function
   | Left -> (x - 1, y)
   | Right -> (x + 1, y)
@@ -75,11 +91,10 @@ let (++>) (x, y) = function
   | Down -> (x, y + 1)
 
 let pos map player =
-  try
-    Some (Hashtbl.find map.players player)
+  try Some (Hashtbl.find map.players player)
   with Not_found -> None
 
-let map_pos m p = Hashtbl.find m.players p
+let map_pos map player = Hashtbl.find map.players player
 
 let is_pos_valid { width; height; _ } (x, y) =
   x >= 0 && y >= 0 && x < width && y < height
@@ -87,6 +102,9 @@ let is_pos_valid { width; height; _ } (x, y) =
 let check_pos map player ppos =
   pos map player = Some ppos
 
+(* Computes the position of player after a move from (x, y) in direction dir.
+ * Incorporates the check that player's position is indeed (x, y), but does'nt
+ * chec that the end position is empty nor anything. *)
 let after_move map player (x, y) dir =
   if check_pos map player (x, y) then
     match dir with
@@ -103,9 +121,12 @@ let after_move map player (x, y) dir =
 let content_in lst map pos =
   try List.mem (map_get map pos) lst with Invalid_argument _ -> false
 
+(* Players can move on empty positions only *)
 let is_free_for_move map pos =
   content_in [ `Empty ] map pos
 
+(* Players can only pose bombs on empty cases — for instance, two bombs can't be
+ * on the same place. *)
 let is_free_for_bomb map pos =
   content_in [ `Empty ] map pos
 
@@ -120,6 +141,7 @@ let try_move map player pos dir =
           true
         end else false
 
+(* Checks that bombing at position pos is valid for player *)
 let can_bomb map player pos =
   check_pos map player pos && is_free_for_bomb map pos
 
@@ -130,6 +152,7 @@ let try_bomb map player pos timer dist =
     true
   end else false
 
+(* Internally called by blast only. Kills a player *)
 let kill map player =
   match pos map player with
   | Some p -> begin
@@ -137,8 +160,10 @@ let kill map player =
     Hashtbl.remove map.players player;
     true
   end
-  | None -> assert false (* wut *)
+  | None ->
+      raise (Inconsistency "kill called on bad input.")
 
+(* Computes an explosion. TODO: explain the algorithm. *)
 let blast ?(killed=[]) map pos dist =
   let killall map pos k =
     let players = map_players map pos in
@@ -191,11 +216,10 @@ let decrease_timers ({ bombs; _ } as map) =
         map_set map pos (`Bomb (timer - 1, dist, node));
         killed
       end
-      | _ -> assert false (* Wow, error there. *))
+      | _ ->
+          raise (Inconsistency "Bomb nodes badly synchronized."))
     bombs
     []
-
-exception InvalidMap
 
 let empty_map ~width:m ~height:m' =
   { width = m
@@ -251,7 +275,9 @@ let string_of_map { width; height; content; players; _ } =
           function
             | `Indestructible, _ -> put x y '#'
             | `Destructible, _ -> put x y '$'
-            | `Destroying, _ -> assert false
+            | `Destroying, _ ->
+                raise (Inconsistency ("`Destroying in string_of_map (outside "
+                ^ "of blast)."))
             | `Bomb (_, _, _), _ | `Empty, _ -> ()))
     content;
   Hashtbl.iter

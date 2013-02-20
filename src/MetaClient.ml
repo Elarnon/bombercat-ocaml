@@ -45,9 +45,12 @@ let run display addr =
     lwt co = Connection.open_connection addr in
     let rec update_games () =
       match_lwt list_games co with
-      | None -> Display.Meta.quit display >> return_none
+      | None ->
+          Display.Meta.error display "Connection lost.";
+          Display.Meta.input display
       | Some gs ->
-          Display.Meta.update display gs; Lwt_unix.sleep 0.2 >> update_games ()
+          Display.Meta.update display gs; Lwt_unix.sleep 0.2 >>
+          update_games ()
     in Lwt.pick [ Display.Meta.input display; update_games () ]
   with
   | Unix.Unix_error (e, _, _) ->

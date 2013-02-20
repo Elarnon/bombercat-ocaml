@@ -30,9 +30,9 @@ let _ =
       Network.mk_addr ~port:!mport !meta >>= fun meta_addr ->
       Network.mk_addr ~port:!port !ip >>= fun init_addr ->
       MetaClient.Connection.open_connection meta_addr >>= fun meta ->
-      InitialisationServer.create init_addr meta >>= function
+      InitialisationServer.run init_addr meta >>= function
         | None -> return_unit
         | Some game ->
-            GameServer.main init_addr game
+            GameServer.run init_addr game
     with Not_found -> Lwt_log.fatal "Bad address." >> exit 2
     ) ())

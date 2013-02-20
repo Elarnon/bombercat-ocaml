@@ -23,4 +23,4 @@ type game =
  *)
 (* TODO: change MetaClient.Connection.t to Network.addr *)
 (* TODO: take name and parameters as arguments *)
-val create : Network.addr -> MetaClient.Connection.t -> game option Lwt.t
+val run : Network.addr -> MetaClient.Connection.t -> game option Lwt.t

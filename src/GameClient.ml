@@ -15,16 +15,41 @@ type t =
   ; display : Display.Game.t
   ; mutable reject : int
   ; mutable sequence : int
-  ; mutable logs : Protocol.Game.client list
+  ; mutable pending : Protocol.Game.client list
   ; socket : Network.UDP.t
   ; server : Network.addr
   ; turns : Protocol.Game.server R.t
   ; mutable last_sync : float
   }
 
+(* let treating t = function
+  | BOMB pos ->
+      List.fold_left
+        (fun (ok, l) b ->
+          if ok then b :: l
+          else match b with
+          | BOMB p' when pos = p' -> (true, l)
+          | BOMB _ -> cancel b; (true, l)
+          | MOVE _ -> (true, b :: l)) *)
+
+let resend_commands t =
+  let cmds = firsts 5 t.pending in
+  if cmds <> [] then begin
+    let str, n = most_clients_to_string cmds in
+    ignore (Network.UDP.sendto t.socket str t.server)
+  end;
+  return_unit
+
+let send_command t command =
+  let res = COMMAND (t.ident, t.sequence, t.reject, command) in
+  t.pending <- res :: t.pending;
+  t.sequence <- t.sequence + 1;
+  resend_commands t
+
 let resync t =
-  let tout = float_of_int (t.params.p_turn_time) /. 4000. in
+  let tout = float_of_int (t.params.p_turn_time) /. 1000. in
   let now = Unix.gettimeofday () in
+  (* Do not send a SYNC message if one was sent less than one turn earlier. *)
   if now -. t.last_sync > tout then begin
     t.last_sync <- now;
     let strs = all_clients_to_strings [ SYNC (t.ident, R.last_id t.turns) ] in
@@ -52,17 +77,6 @@ let rec treat_input t =
       | _ -> treat_input t
   with Lwt_unix.Timeout -> resync t; treat_input t
 
-let resend_commands t =
-  let str, _ = most_clients_to_string (firsts 5 t.logs) in
-  ignore (Network.UDP.sendto t.socket str t.server);
-  return_unit
-
-let send_command t command =
-  let res = COMMAND (t.ident, t.sequence, t.reject, command) in
-  t.logs <- res :: t.logs;
-  t.sequence <- t.sequence + 1;
-  resend_commands t
-
 let rec treat_commands t =
   Display.Game.input t.display >>= function
     | None -> return ()
@@ -81,8 +95,12 @@ let rec update_map t =
           let map_id = snd @$ Hashtbl.find t.players ident in
           List.iter (function
             | CLIENT (MOVE (pos, dir)) ->
+                (* if map_id = t.map_id then
+                  treating t (MOVE (pos, dir)); *)
                 ignore (Data.try_move t.map map_id pos dir)
             | CLIENT (BOMB pos) ->
+                (* if map_id = t.map_id then
+                  treating t (BOMB pos); *)
                 let btime = t.params.p_bomb_time
                 and bdist = t.params.p_bomb_dist in
                 ignore (Data.try_bomb t.map map_id pos btime bdist)
@@ -109,7 +127,7 @@ let main display addr map params players ident =
     ; map_id
     ; reject = 0
     ; sequence = 0
-    ; logs = []
+    ; pending = []
     ; socket = Network.UDP.create ()
     ; server = addr
     ; turns = R.create ()
