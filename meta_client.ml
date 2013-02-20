@@ -4,6 +4,7 @@ open Protocol.Initialisation
 
 let port = ref 22222
 let address = ref "127.0.0.1"
+let sfml = ref false
 
 let spec =
   [ "--port", Arg.Set_int port, " TCP port of the meta server [22222]"
@@ -23,7 +24,7 @@ let _ = Lwt_main.run begin Lwt_unix.handle_unix_error (fun () ->
     usage;
 
   try_lwt
-    let render = (module LTermDisplay) in (* TODO: SFML *)
+    let render = (module LTermDisplay : Display.S) in (* TODO: SFML *)
     lwt addr = Network.mk_addr ~port:!port !address in
     lwt display = Display.Meta.create render in
     match_lwt MetaClient.run display addr with
