@@ -93,3 +93,13 @@ let list_iteri f l =
     | h::t -> f n h; iteri (n + 1) t
   in iteri 0 l
 
+let string_size str =
+  let row = ref 0
+  and col = ref 0
+  and ccol = ref 0 in
+  String.iter
+    (function
+      | '\n' -> ccol := 0; row := !row + 1
+      | _ -> ccol := !ccol + 1; col := max !col !ccol)
+    str;
+  (!row, !col)

@@ -49,4 +49,7 @@ let run display addr =
       | Some gs ->
           Display.Meta.update display gs; Lwt_unix.sleep 0.2 >> update_games ()
     in Lwt.pick [ Display.Meta.input display; update_games () ]
-  with e -> Display.Meta.quit display >> fail e
+  with
+  | Unix.Unix_error (e, _, _) ->
+      Display.Meta.error display (Unix.error_message e);
+      Display.Meta.input display

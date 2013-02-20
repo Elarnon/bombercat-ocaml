@@ -8,6 +8,8 @@ module type S = sig
 
     val update : t -> Protocol.Meta.game list -> unit
 
+    val error : t -> string -> unit
+
     val input : t -> Protocol.Meta.game option Lwt.t
 
     val quit : t -> unit Lwt.t
@@ -66,6 +68,10 @@ module Meta = struct
   let update m =
     let module M = (val m : META) in
     M.D.Meta.update M.x
+
+  let error m =
+    let module M = (val m : META) in
+    M.D.Meta.error M.x
 
   let input m =
     let module M = (val m : META) in

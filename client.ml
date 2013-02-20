@@ -1,39 +1,56 @@
 open Protocol.Meta
 open Protocol.Initialisation
 
-let port = ref 22222
-let address = ref "127.0.0.1"
+let address = ref None
 let sfml = ref false
+let direct = ref false
 let pseudo = ref None
 
-let spec =
-  [ "--port", Arg.Set_int port, " TCP port of the meta server [22222]"
-  ; "--address", Arg.Set_string address, " IP address of the meta server [127.0.0.1]"
-  ; "--sfml", Arg.Set sfml, " Use graphical client [false]"
+let spec = Arg.align
+  [ "--direct", Arg.Set direct,
+    " Treat <address> as an initialisation server (bypass meta protocol)"
+  ; "--meta", Arg.Clear direct,
+    " Treat <address> as a meta server (default)"
+  ; "--sfml", Arg.Set sfml, " Use a graphical client (incomplete)"
+  ; "--term", Arg.Clear sfml, " Use a terminal client (default)"
   ]
 
-let anon s =
-  pseudo := Some s
+let anon =
+  let nb = ref 0 in
+  fun s ->
+    if !nb = 0 then begin
+      nb := 1;
+      address := Some s
+    end else if !nb = 1 then begin
+      nb := 2;
+      pseudo := Some s
+    end else
+      raise (Arg.Bad "Too many arguments.")
 
-let usage = "usage: " ^ Sys.argv.(0) ^ " [--port <meta port>] "
-            ^ "[--address <meta address>] [--sfml] pseudo"
+let usage =
+  "usage: " ^ Sys.argv.(0) ^ " [--direct] [--sfml] <address>[:<port>] pseudo"
 
 let _ = Lwt_main.run begin
   Arg.parse
-    (Arg.align spec)
+    spec
     anon
     usage;
 
-  match !pseudo with
-  | None -> begin
-    lwt () = Lwt_log.fatal "A pseudo is required for the moment." in
+  match !pseudo, !address with
+  | None, _ -> begin
+    lwt () = Lwt_log.fatal "A pseudo is required." in
     Arg.usage spec usage;
     exit 2
   end
-  | Some pseudo -> Lwt_unix.handle_unix_error (fun () ->
+  | _, None -> begin
+    lwt () = Lwt_log.fatal "No server address provided." in
+    Arg.usage spec usage;
+    exit 2
+  end
+  | Some pseudo, Some address -> Lwt_unix.handle_unix_error (fun () ->
     try_lwt
       let render = (module LTermDisplay : Display.S) in (* TODO: SFML *)
-      lwt addr = Network.mk_addr ~port:!port !address in
+      lwt addr = Network.parse_addr address in
       lwt display = Display.Meta.create render in
       match_lwt MetaClient.run display addr with
       | None -> Display.Meta.quit display

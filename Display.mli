@@ -20,6 +20,8 @@ module type S = sig
      * [games].
      *)
     val update : t -> Protocol.Meta.game list -> unit
+    
+    val error : t -> string -> unit
 
     (** [input device] waits for a choice of game from the device. 
      * @return [Some game] if a game [game] was chosen by the user, [None] if
@@ -79,6 +81,8 @@ module Meta : sig
   val create : (module S) -> t Lwt.t
 
   val update : t -> Protocol.Meta.game list -> unit
+
+  val error : t -> string -> unit
 
   val input : t -> Protocol.Meta.game option Lwt.t
 

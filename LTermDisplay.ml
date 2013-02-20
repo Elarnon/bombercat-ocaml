@@ -10,6 +10,7 @@ module Meta = struct
     { m_ui : LTerm_ui.t
     ; m_games : Protocol.Meta.game list ref
     ; m_looping : Protocol.Meta.game option Lwt.t
+    ; m_errors : string Queue.t
     }
 
   let id_before lst key =
@@ -59,7 +60,7 @@ module Meta = struct
           return None
       | _ev -> loop ui current lst
 
-  let draw current games ui matrix =
+  let draw error errors current games ui matrix =
     let module D = LTerm_draw in
     let size = LTerm_ui.size ui in
     let ctx = D.context matrix size in
@@ -93,23 +94,60 @@ module Meta = struct
           let lctx =
             D.sub ctx { row1 = i + 2; row2 = i + 3; col1 = 0; col2 = size.cols }
           in D.fill_style lctx LTerm_style.({ none with reverse = Some true }))
-      games
+      games;
+    if !error = None && not (Queue.is_empty errors) then begin
+      let err = Queue.take errors in
+      error := Some err
+    end;
+    match !error with
+    | None -> ()
+    | Some err ->
+        let (row, col) = string_size err in
+        let rstart = (size.rows - 1 - row) / 2
+        and rend = (size.rows - 1 + row) / 2
+        and cstart = (size.cols + 1 - col) / 2
+        and cend = (size.cols + 1 + col) / 2 in
+        let sub = D.sub ctx { row1 = rstart - 2; row2 = rend + 3
+                            ; col1 = cstart - 1; col2 = cend + 1} in
+        D.clear sub;
+        D.draw_frame
+          sub { row1 = 0; row2 = row + 5; col1 = 0; col2 = col + 2 }
+          D.Heavy;
+        D.draw_string_aligned sub 1 H_align_center err;
+        D.draw_hline sub (row + 2) 1 col D.Light;
+        let style = LTerm_style.({ none with reverse = Some true }) in
+        let ok_ctx =
+          D.sub sub
+                { row1 = row + 3; row2 = row + 4; col1 = 1; col2 = col / 2 }
+        in D.draw_string_aligned ~style ok_ctx 0 H_align_center "OK";
+        let quit_ctx =
+          D.sub sub
+                { row1 = row + 3; row2 = row + 4; col1 = col / 2; col2 = col }
+        in D.draw_string_aligned quit_ctx 0 H_align_center "QUIT"
 
   let create () =
     lwt term = Lazy.force LTerm.stdout in
     let current = ref None in
     let games = ref [] in
-    lwt ui = LTerm_ui.create term (fun ui m -> draw !current !games ui m) in
+    let errors = Queue.create () in
+    let e = ref None in
+    lwt ui =
+      LTerm_ui.create term (fun ui m -> draw e errors !current !games ui m) in
     return
       { m_games = games
       ; m_looping = loop ui current games
-      ; m_ui = ui }
+      ; m_ui = ui
+      ; m_errors = errors }
 
   let update { m_games; m_ui; _ } games =
     m_games := 
       List.sort
         (fun { game_id; _ } { game_id = id; _ } -> compare game_id id)
         games;
+    LTerm_ui.draw m_ui
+
+  let error { m_errors; m_ui; _ } error =
+    Queue.add error m_errors;
     LTerm_ui.draw m_ui
 
   let input { m_looping; _ } =
