@@ -43,7 +43,7 @@ let rec treat_input t =
     Lwt_unix.with_timeout tout (fun () -> Network.UDP.recvfrom t.socket)
     >>= function
       | None ->
-          Display.Game.quit t.display
+          return ()
       | Some (str, addr) when addr = t.server ->
           let servers = string_to_servers str in
           Lwt_list.iter_s (fun m -> treat_message t m; Lwt_main.yield ())
@@ -65,7 +65,7 @@ let send_command t command =
 
 let rec treat_commands t =
   Display.Game.input t.display >>= function
-    | None -> Display.Game.quit t.display
+    | None -> return ()
     | Some command -> send_command t command >> treat_commands t
 
 let rec update_map t =
@@ -112,7 +112,7 @@ let main display addr map params players ident =
     ; logs = []
     ; socket = Network.UDP.create ()
     ; server = addr
-    ; turns = R.create 17
+    ; turns = R.create ()
     ; last_sync = 0.0
     } in
   Display.Game.update display 0;

@@ -177,7 +177,7 @@ let main addr game =
       ; pi_map_id = map_id
       ; pi_reject = 0
       ; pi_author = None
-      ; pi_commands = R.create ~window ~max_size 17
+      ; pi_commands = R.create ~window ~max_size ()
       }) game.g_players;
   let socket = Network.UDP.create ~addr () in
   let server =

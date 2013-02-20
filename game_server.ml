@@ -33,6 +33,6 @@ let _ =
       InitialisationServer.create init_addr meta >>= function
         | None -> return_unit
         | Some game ->
-            Game.Server.main init_addr game
+            GameServer.main init_addr game
     with Not_found -> Lwt_log.fatal "Bad address." >> exit 2
     ) ())

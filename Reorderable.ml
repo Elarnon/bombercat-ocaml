@@ -10,8 +10,8 @@ type 'a t =
 
 exception Empty
 
-let create ?window ?max_size size =
-  { table = Hashtbl.create size
+let create ?window ?max_size () =
+  { table = Hashtbl.create (match window with | None -> 17 | Some s -> s)
   ; queue = Queue.create ()
   ; window
   ; max_size
@@ -57,4 +57,4 @@ let junk t = qwrap1 queue_junk t
 let last_id { last_queued; _ } = last_queued
 
 let is_full { queue; max_size; _ } =
-  Some (Queue.length queue) < max_size
+  Some (Queue.length queue) >= max_size

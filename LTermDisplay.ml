@@ -120,16 +120,38 @@ module Meta = struct
 end
 
 module Init = struct
-  type t = unit
+  type t = LTerm_ui.t
+
+  let draw ui matrix =
+    let module Ui = LTerm_ui in
+    let module Draw = LTerm_draw in
+    let module Style = LTerm_style in
+    let size = Ui.size ui in
+    let ctx = Draw.context matrix size in
+    Draw.clear ctx;
+    let middle = size.rows / 2 in
+    Draw.draw_string_aligned ctx middle H_align_center
+      "Initializing game… Please wait."
 
   let create ?meta _game =
     begin match meta with
     | None -> return ()
     | Some m -> Meta.quit m end >>
-    return ()
+    lwt term = Lazy.force LTerm.stdout in
+    lwt ui = LTerm_ui.create term draw in
+    LTerm_ui.draw ui;
+    return ui
 
-  let quit () =
-    return ()
+  let rec input ui =
+    let open LTerm_event in
+    let open LTerm_key in
+    match_lwt LTerm_ui.wait ui with
+    | Key { code = Escape; _ } ->
+        return ()
+    | _ev -> input ui
+
+  let quit ui =
+    LTerm_ui.quit ui
 end
 
 module Game = struct
@@ -178,10 +200,12 @@ module Game = struct
     Draw.draw_string ctx 0 0 (Format.sprintf "Tour %4i/%4i" !turn time)
 
 
-  let create ?(init=()) players map time idme =
+  let create ?init players map time idme =
+    begin match init with
+    | None -> return ()
+    | Some i -> Init.quit i end >>
     (* TODO catch Not_found *)
     let me = snd @$ Hashtbl.find players idme in
-    let () = init in
     lwt term = Lazy.force LTerm.stdout in
     let current = ref 0 in
     lwt ui = LTerm_ui.create term (draw map time me current) in

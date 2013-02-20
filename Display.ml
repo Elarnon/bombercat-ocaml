@@ -18,6 +18,8 @@ module type S = sig
 
     val create : ?meta:Meta.t -> Protocol.Meta.game -> t Lwt.t
 
+    val input : t -> unit Lwt.t
+
     val quit : t -> unit Lwt.t
   end
 
@@ -92,6 +94,10 @@ module Init = struct
       module D = M.D
       let x = init
     end : INIT)
+
+  let input i =
+    let module I = (val i : INIT) in
+    I.D.Init.input I.x
 
   let quit i =
     let module I = (val i : INIT) in

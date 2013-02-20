@@ -2,7 +2,8 @@
 
 module Connection : Network.TCP.S
 
-(** Registers a game server on a meta server.
+(** [add co ~addr ~name ~nb_players] registers a game server on the meta server
+ * connected with [co].
  *  @param addr An accessible address where the game server will be available
  *  @param name A name to identify the game server
  *  @param nb_players The number of slots available on the map
@@ -14,20 +15,23 @@ val add :
   Connection.t -> addr:Network.addr -> name:string -> nb_players:int
   -> Protocol.Meta.game option Lwt.t
 
-(** Updates the number of players in a game on a meta server.
- *  @param id The ID of the game to update
+(** [update co ~id ~nb_players] sets the number of players to [nb_players] in
+ * the game with identifier [id] on the meta server connected with [co].
+ *  @param id The identifier of the game to update
  *  @param nb_players The current number of players in the game
  *  @raise Unix.unix_error on network errors
  *)
 val update : Connection.t -> id:int -> nb_players:int -> unit
 
-(** Deletes a game from a meta server.
+(** [delete co ~id] deletes the game with identifier [id] from the meta server
+ * connected with [co].
  *  @param id The ID of the game to delete
  *  @raise Unix.unix_error on network errors
  *)
 val delete : Connection.t -> id:int -> unit
 
-(** Lists the games on a meta server
+(** [list_games co] lists the games present on the meta server connected with
+ * [co].
  *  @return [Some lst] where [lst] is the list of all games on the server if it
  *          is given by the server, [None] otherwise.
  *  @raise Unix.unix_error on network errors

@@ -46,9 +46,11 @@ let send_and_wait (srv, mut, _, stream) msg =
 
 let poll (_, _, stream, _) = Lwt_stream.get stream
 
-let init msg addr =
+let init display msg addr =
   lwt co = connect addr in
-  match_lwt send_and_wait co msg with
+  let res = Lwt.pick [ Display.Init.input display >> return_none
+                     ; send_and_wait co msg ] in
+  match_lwt res with
   | None -> return Closed
   | Some (`Rejected reason) -> return (Rejected reason)
   | Some (`Ok (ident, map, params)) ->
@@ -71,8 +73,8 @@ let init msg addr =
             return @$ Ok { ident; map; params; players; spectators; start }
       in loop ()
 
-let hello ~pseudo ?(versions=[1]) =
-  init (HELLO (pseudo, versions))
+let hello display ~pseudo ?(versions=[1]) =
+  init display (HELLO (pseudo, versions))
 
-let spectator ~pseudo =
-  init (SPECTATOR pseudo)
+let spectator display ~pseudo =
+  init display (SPECTATOR pseudo)

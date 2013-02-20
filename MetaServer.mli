@@ -1,12 +1,14 @@
-(** A server for the Meta protocol. *)
+(** Implements server-side aspects of the Meta protocol. *)
+
+(** Represents a server for the Meta protocol. *)
 type server
 
-(** Creates a new server for the Meta protocol.
- *  @param addr The address the server listens to
+(** [create addr] creates a new server for the Meta protocol, listening on
+ * address [addr].
  *)
 val create : Network.addr -> server
 
-(** Stops a given server for the Meta protocol.
- *  @param server The server to stop
+(** [shutdown server] closes the Meta server [server], that is, [server] stops
+ * accepting new connections and existing connections are closed.
  *)
 val shutdown : server -> unit

@@ -1,3 +1,5 @@
+(** Utilify functions, types, and modules *)
+
 open Lwt
 
 module Smap = Map.Make(String)
