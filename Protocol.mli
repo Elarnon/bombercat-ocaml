@@ -46,6 +46,14 @@ module Initialisation : sig
     ; p_version : int
     }
 
+  type game =
+    { g_map : Data.map
+    ; g_params : params
+    ; g_players : (string, string * char) Hashtbl.t
+    ; g_start : Unix.tm * int
+    ; g_name : string
+    }
+
   type client =
     | HELLO of string * int list
     | SPECTATOR of string

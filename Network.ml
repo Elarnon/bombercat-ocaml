@@ -61,7 +61,7 @@ let raw_addr addr =
   match addr with
   | ADDR_INET (inet, port) ->
       (Unix.string_of_inet_addr inet, port)
-  | _ -> assert false
+  | _ -> assert false (* TODO *)
 
 module type CHANNEL = sig
     type input

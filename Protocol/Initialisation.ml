@@ -28,6 +28,15 @@ type params =
   ; p_version : int
   }
 
+type game =
+  { g_map : Data.map
+  ; g_params : params
+  ; g_players : (string, string * char) Hashtbl.t
+  ; g_start : Unix.tm * int
+  ; g_name : string
+  }
+
+
 let bencode_params p =
   D (map_of_list
     [ ("GameTime", I p.p_game_time)

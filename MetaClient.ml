@@ -39,3 +39,14 @@ let list_games srv =
     | None ->
         Lwt_log.info ("[Meta client] Server shut down the connection.") >>
         return_none
+
+let run display addr =
+  try_lwt
+    lwt co = Connection.open_connection addr in
+    let rec update_games () =
+      match_lwt list_games co with
+      | None -> Display.Meta.quit display >> return_none
+      | Some gs ->
+          Display.Meta.update display gs; Lwt_unix.sleep 0.2 >> update_games ()
+    in Lwt.pick [ Display.Meta.input display; update_games () ]
+  with e -> Display.Meta.quit display >> fail e

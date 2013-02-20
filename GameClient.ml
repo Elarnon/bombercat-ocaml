@@ -12,7 +12,7 @@ type t =
   ; ident : string
   ; pseudo : string
   ; map_id : char
-  ; display : Display.t
+  ; display : Display.Game.t
   ; mutable reject : int
   ; mutable sequence : int
   ; mutable logs : Protocol.Game.client list
@@ -42,7 +42,8 @@ let rec treat_input t =
     let tout = float_of_int (t.params.p_turn_time) /. 1000. *. 4. in
     Lwt_unix.with_timeout tout (fun () -> Network.UDP.recvfrom t.socket)
     >>= function
-      | None -> Display.quit t.display
+      | None ->
+          Display.Game.quit t.display
       | Some (str, addr) when addr = t.server ->
           let servers = string_to_servers str in
           Lwt_list.iter_s (fun m -> treat_message t m; Lwt_main.yield ())
@@ -63,8 +64,8 @@ let send_command t command =
   resend_commands t
 
 let rec treat_commands t =
-  Display.input t.display >>= function
-    | None -> Display.quit t.display
+  Display.Game.input t.display >>= function
+    | None -> Display.Game.quit t.display
     | Some command -> send_command t command >> treat_commands t
 
 let rec update_map t =
@@ -89,16 +90,15 @@ let rec update_map t =
             | DEAD -> ()) actions
           with Not_found -> (* TODO log *) ()) actions;
         ignore (Data.decrease_timers t.map);
-        Display.update t.display tid
+        Display.Game.update t.display tid
     | GAMEOVER (_, { winner }) ->
        raise (X.Win winner)
   done; return_none with
     | R.Empty -> update_map t
     | X.Win winner -> return (Some winner) end
 
-let main dcreate addr map params players ident =
+let main display addr map params players ident =
   let map_id = snd @$ Hashtbl.find players ident in
-  lwt display = dcreate map params map_id in
   let t =
     { params
     ; map
@@ -115,7 +115,7 @@ let main dcreate addr map params players ident =
     ; turns = R.create 17
     ; last_sync = 0.0
     } in
-  Display.update display 0;
+  Display.Game.update display 0;
   resync t;
   Lwt.pick [
    update_map t;

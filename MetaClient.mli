@@ -34,3 +34,11 @@ val delete : Connection.t -> id:int -> unit
  *          closed, etc.)
  *)
 val list_games : Connection.t -> Protocol.Meta.game list option Lwt.t
+
+(** Runs a meta client on a display and returns the selected game.
+ *  @param display The display to use
+ *  @param addr The address of the meta server to contact
+ *  @return [Some game] if a game was selected
+ *  @return [None] otherwise (connection lost, client exited, etc.)
+ *)
+val run : Display.Meta.t -> Network.addr -> Protocol.Meta.game option Lwt.t

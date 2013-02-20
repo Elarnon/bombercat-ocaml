@@ -1,20 +1,18 @@
-type t
+type data =
+  { ident : string
+  ; map : Data.map
+  ; params : Protocol.Initialisation.params
+  ; players : (string, (string * char)) Hashtbl.t
+  ; spectators : (string, string) Hashtbl.t
+  ; start : Unix.tm * int
+  }
 
-type event =
-  [ `Start of Unix.tm * int
-  | `Join of string * string * char
-  | `Spectator of string * string
-  | `Quit of string
-  | `Closed ]
+type result =
+  | Rejected of string
+  | Ok of data
+  | Closed
 
-val connect : Network.addr -> t Lwt.t
+val hello : pseudo:string -> ?versions:int list -> Network.addr -> result Lwt.t
 
-val hello : t -> pseudo:string -> versions:int list ->
-  [ `Rejected of string
-  | `Ok of string * Data.map * Protocol.Initialisation.params ] option Lwt.t
-
-val spectator : t -> pseudo:string ->
-  [ `Rejected of string
-  | `Ok of string * Data.map * Protocol.Initialisation.params ] option Lwt.t
-
-val poll : t -> event option Lwt.t
+val spectator :
+  pseudo:string -> Network.addr -> result Lwt.t

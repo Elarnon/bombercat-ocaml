@@ -74,7 +74,7 @@ let mk position = function
   | Empty -> mk_empty position
   | Destructible -> mk_crate position
   | Indestructible -> mk_wall position
-  | Bomb t -> mk_bomb 0 position
+  | Bomb _t -> mk_bomb 0 position (* TODO timer *)
 
 type t =
   { map : Data.map
@@ -90,12 +90,12 @@ let create map params me =
   let app = new render_window vm "Bombercat client v0.1" in
   return { map; params; me; app }
 
-let update { map; params; me; app } turn =
+let update { map; app; _ } _turn =
   app#clear ();
   Data.iter_content (fun pos c ->
     app # draw (mk_empty pos);
     app # draw (mk pos c)) map;
-  Data.iter_players (fun c pos ->
+  Data.iter_players (fun _c pos ->
     let sprite = mk_up 0 pos in
     app # draw sprite) map;
   app # display
@@ -106,9 +106,9 @@ let rec input { map; params; me; app } =
   match app#poll_event with
   | Some e -> begin match e with
     | Closed -> return_none
-    | KeyPressed { code = KeyCode.Escape } ->
+    | KeyPressed { code = KeyCode.Escape; _ } ->
         return_none
-    | KeyPressed { code } -> begin try
+    | KeyPressed { code; _ } -> begin try
       let pos = Data.map_pos map me in
       let open KeyCode in
       match code with
@@ -129,5 +129,5 @@ let rec input { map; params; me; app } =
   | None ->
         input { map; params; me; app }
 
-let quit { map; params; me; app } =
+let quit { app; _ } =
   app # close; return ()
