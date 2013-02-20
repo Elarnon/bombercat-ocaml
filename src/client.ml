@@ -11,7 +11,7 @@ let spec = Arg.align
     " Treat <address> as an initialisation server (bypass meta protocol)"
   ; "--meta", Arg.Clear direct,
     " Treat <address> as a meta server (default)"
-  ; "--sfml", Arg.Set sfml, " Use a graphical client (incomplete)"
+  ; "--sfml", Arg.Set sfml, " Use a graphical client (no effect)"
   ; "--term", Arg.Clear sfml, " Use a terminal client (default)"
   ]
 

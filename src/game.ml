@@ -1,38 +1,49 @@
 open Lwt
 
-let port = ref 12345
-let mport = ref 22222
-let meta = ref "127.0.0.1"
+let meta = ref "127.0.0.1:22222"
+let address = ref None
 
-let spec =
-  [ "--port", Arg.Set_int (port), "The port the initialisation and game servers should listen to."
-  ; "--meta-port", Arg.Set_int (mport), "The port to connect to on the meta server."
-  ; "--meta", Arg.Set_string meta, "The address of the meta server."
+let spec = Arg.align
+  [ "--meta", Arg.String (fun m -> meta := m),
+    " The address of the meta server."
   ]
 
-let ip = ref "127.0.0.1"
+let anon =
+  let nb = ref 0 in
+  fun s ->
+    if !nb = 0 then begin
+      nb := 1;
+      address := Some s
+    end else
+      raise (Arg.Bad "Too many arguments.")
 
-let anon s =
-  ip := s
+let usage =
+  "usage: " ^ Sys.argv.(0) ^ " [--meta <address>[:<port>]] <address>:[<port>]"
 
-let usage = "./game_server [--meta-port <meta port>] [--meta <meta address>]"
-  ^ " [--port <bind port>] [<bind address>]"
-
-let _ =
+let _ = Lwt_main.run begin
   Arg.parse
     spec
     anon
     usage;
 
-  Lwt_main.run (
-    Lwt_unix.handle_unix_error (fun () ->
+  match !address with
+  | None -> begin
+    Lwt_log.ign_fatal "An address to bind is required.";
+    Arg.usage spec usage;
+    exit 2
+  end
+  | Some addr -> Lwt_unix.handle_unix_error (fun () ->
     try_lwt
-      Network.mk_addr ~port:!mport !meta >>= fun meta_addr ->
-      Network.mk_addr ~port:!port !ip >>= fun init_addr ->
+      lwt meta_addr =
+        (* match !meta with
+        | None -> return None
+        | Some m ->*) Network.parse_addr !meta in
+      lwt init_addr = Network.parse_addr addr in
       MetaClient.Connection.open_connection meta_addr >>= fun meta ->
       InitialisationServer.run init_addr meta >>= function
         | None -> return_unit
         | Some game ->
             GameServer.run init_addr game
     with Not_found -> Lwt_log.fatal "Bad address." >> exit 2
-    ) ())
+  ) ()
+end
