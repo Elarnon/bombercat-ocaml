@@ -17,56 +17,40 @@ type t =
  *  [of_string] functions. *)
 exception Format_error of string
 
-(** [of_stream stream] decodes a value from the beginning of a stream of
- * characters. [of_stream] stops once the first complete value is encountered,
- * call it again to get subsequent values. 
- * @param stream The stream (supposedly) containing the encoded value
- * @return [Some b] When the stream actually contains an encoded value
- * @return [None] When the stream is empty
- * @raise Format_error When the stream does not contain an encoded value
+(** [of_stream stream] reads a Bencode value at the beginning of [stream].
+ * [of_stream] stops once a complete value is encountered ; you must call it
+ * again to get subsequent values.
+ * @raise Format_error if [stream] doesn't contain a valid Bencode value. In
+ *        that case, no characters are consumed from [stream].
  *)
 val of_stream : char Lwt_stream.t -> t option Lwt.t
 
-(** [to_stream b] converts a Bencode value to a (finite) stream of characters.
- * @param b The Bencode value
- * @return A stream of characters representing the value [b]
+(** [to_stream b] converts [b] to a finite stream of characters
  *)
 val to_stream : t -> char Lwt_stream.t
 
-(** [of_string str] decodes a value from the beginning of a string. If there is
- * junk at the end of the string, it is ignored, and only the value parsed from
- * the beginning of the string is returned.
- * @param str The string (supposedly) containing an encoded value
- * @return [Some b] When the string actually is a prefix of an encoded value
- *         [b].
- * @return [None] When the string is empty
- * @raise Format_error When the string is not a prefix of an encoded value
+(** [of_string str] reads a Bencode value from the beginning of a string, and
+ * ignores any junk at the end of the string.
+ * @raise Format_error if the string isn't a prefix of a Bencode value.
  *)
 val of_string : string -> t option
 
-(** [to_string b] bonverts a Bencode value to a string
- * @param b The Bencode value
- * @return A string of characters representing the value [b] 
+(** [to_string b] converts [b] to a string
  *)
 val to_string : t -> string
 
-(** [most_to_string len lst] converts as many bencode velues to a string of
- * length at most [len] as possible, and returns both that string and the number
- * of bencoded values that was converted. 
- * @param len The maximum length of the string
- * @param lst All the values to serialize
- * @return A couple [(str, nb)] where [str] is a string of length at most [len]
- *         representing the [nb] firsts elements of [lst].
+(** [most_to_string len lst] converts as many Bencode value to a string of
+ * length at most [len] as possible, and places them into a list.
+ * @return A couple [(str, nb]) where [str] is a string of length at most [len]
+ *         containing the concatenation (in the same order) of the [nb] firsts
+ *         elements of [lst].
  *)
 val most_to_string : int -> t list -> string * int
 
-(** [all_to_strings len lst] converts all bencoded values to as many strings of
- * length at most [len] as needed, and returns those.  [all_to_strings] loops
- * infinitely when a value in [lst] serializes to a string of length greater
- * than [len].
- * @param len The maximum length of the string
- * @param lst All the values to serialize
- * @return A list of strings of length at most [len] representing the elements
- *         of [lst].
+(** [all_to_strings len lst] converts all Bencode values in [lst] to as many
+ * strings of length at most [len] as needed (see {!most_to_string} for more
+ * details about each of these strings).
+ * @raise Failure ["all_to_strings"] if a value in [lst] serializes to a string
+ *        of length greater than [len].
  *)
 val all_to_strings : int -> t list -> string list

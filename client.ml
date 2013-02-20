@@ -1,53 +1,55 @@
 open Lwt
-open Misc
+open Protocol.Meta
+open Protocol.Initialisation
 
-let mport = ref 22222
-let meta = ref "127.0.0.1"
-
+let port = ref 22222
+let address = ref "127.0.0.1"
 let sfml = ref false
+let pseudo = ref None
 
 let spec =
-  [ "--address", Arg.Set_int mport, " Address of the game server [127.0.0.1]"
-  ; "--port", Arg.Set_string meta, " Port of the game server [22222]"
+  [ "--port", Arg.Set_int port, " TCP port of the meta server [22222]"
+  ; "--address", Arg.Set_string address, " IP address of the meta server [127.0.0.1]"
   ; "--sfml", Arg.Set sfml, " Use graphical client [false]"
   ]
-
-let pseudo = ref None
 
 let anon s =
   pseudo := Some s
 
-let usage = "usage: " ^ Sys.argv.(0) ^ " [--meta-port <meta port>] "
-  ^ "[--meta <meta address>] [--address <address>] [--port <port>] <pseudo>"
+let usage = "usage: " ^ Sys.argv.(0) ^ " [--port <meta port>] "
+            ^ "[--address <meta address>] [--sfml] pseudo"
 
-let _ =
-  Lwt_main.run (
-    Arg.parse
-      (Arg.align spec)
-      anon
-      usage;
+let _ = Lwt_main.run begin
+  Arg.parse
+    (Arg.align spec)
+    anon
+    usage;
 
-    match !pseudo with
-    | None -> begin
-      prerr_endline
-        (Sys.argv.(0) ^ ": No pseudo provided");
-      Arg.usage spec usage;
-      exit 2
-    end
-    | Some pseudo -> Lwt_unix.handle_unix_error (fun () ->
-        let render =
-          if !sfml then
-            Display.Game.create (module LTermDisplay : Display.S)
-          else
-            Display.Game.create (module LTermDisplay : Display.S) in
-        try_lwt
+  match !pseudo with
+  | None -> begin
+    lwt () = Lwt_log.fatal "A pseudo is required for the moment." in
+    Arg.usage spec usage;
+    exit 2
+  end
+  | Some pseudo -> Lwt_unix.handle_unix_error (fun () ->
+    try_lwt
+      let render = (module LTermDisplay : Display.S) in (* TODO: SFML *)
+      lwt addr = Network.mk_addr ~port:!port !address in
+      lwt display = Display.Meta.create render in
+      match_lwt MetaClient.run display addr with
+      | None -> return ()
+      | Some ({ game_addr; _ } as game) ->
+          lwt init = Display.Init.of_meta display game in
           let open InitialisationClient in
-          Network.mk_addr ~port:!port !addr >>= fun addr ->
-          match_lwt hello ~pseudo ~versions:[1] addr with
+          match_lwt hello ~pseudo ~versions:[1] game_addr with
           | Closed -> return ()
           | Rejected reason -> Lwt_log.error reason
-          | Ok { ident; map; params; players; spectators; _ } ->
-              Game.Client.main render addr map params players spectators ident
-        with Not_found -> Lwt_log.fatal "Unknown address." >> exit 2)
-        ()
-  )
+          | Ok { ident; map; params; players; (*spectators;*) _ } ->
+              lwt display =
+                Display.Game.of_init init players map params.p_game_time ident
+              in
+              GameClient.main
+                display game_addr map params players (*spectators*) ident
+    with Not_found ->
+      Lwt_log.fatal "Unable to connect to the server." >> exit 2
+) () end
